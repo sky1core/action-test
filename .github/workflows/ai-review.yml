@@ -1,11 +1,11 @@
 name: AI Code Review
 
 on:
-  # Ready for review 시 자동 실행
+  # wip 라벨 제거 시 자동 실행
   pull_request:
-    types: [ready_for_review]
+    types: [unlabeled]
 
-  # Ready 상태에서 push 시 자동 실행
+  # wip 라벨 없는 상태에서 push 시 자동 실행
   push:
     branches-ignore:
       - main
@@ -26,7 +26,7 @@ concurrency:
 
 env:
   REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}
-  COOLDOWN_MINUTES: 30
+  COOLDOWN_MINUTES: 5
 
 jobs:
   # 테스트 먼저 실행
@@ -74,11 +74,11 @@ jobs:
           echo "pr_found=true" >> $GITHUB_OUTPUT
 
           # PR 상세 정보 조회
-          PR_INFO=$(gh pr view $PR_NUMBER --json isDraft,headRefOid)
-          IS_DRAFT=$(echo "$PR_INFO" | jq -r '.isDraft')
+          PR_INFO=$(gh pr view $PR_NUMBER --json headRefOid,labels)
           HEAD_SHA=$(echo "$PR_INFO" | jq -r '.headRefOid')
+          HAS_WIP=$(echo "$PR_INFO" | jq '[.labels[].name] | map(select(. == "wip")) | length')
 
-          echo "is_draft=$IS_DRAFT" >> $GITHUB_OUTPUT
+          echo "has_wip=$HAS_WIP" >> $GITHUB_OUTPUT
           echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,7 +87,7 @@ jobs:
         id: check
         run: |
           PR_FOUND="${{ steps.pr-info.outputs.pr_found }}"
-          IS_DRAFT="${{ steps.pr-info.outputs.is_draft }}"
+          HAS_WIP="${{ steps.pr-info.outputs.has_wip }}"
           PR_NUMBER="${{ steps.pr-info.outputs.pr_number }}"
           HEAD_SHA="${{ steps.pr-info.outputs.head_sha }}"
           EVENT="${{ github.event_name }}"
@@ -102,9 +102,9 @@ jobs:
             exit 0
           fi
 
-          # 드래프트면 스킵 (수동 실행 제외)
-          if [ "$IS_DRAFT" = "true" ] && [ "$EVENT" != "workflow_dispatch" ]; then
-            echo "❌ 드래프트 상태 - 검사 스킵"
+          # wip 라벨 있으면 스킵 (수동 실행 제외)
+          if [ "$HAS_WIP" != "0" ] && [ "$EVENT" != "workflow_dispatch" ]; then
+            echo "❌ wip 라벨 있음 - 검사 스킵"
             echo "should_run=false" >> $GITHUB_OUTPUT
             exit 0
           fi
