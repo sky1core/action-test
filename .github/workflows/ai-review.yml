@@ -47,7 +47,7 @@ jobs:
           gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             -f state=pending \
             -f context="merge-gate" \
-            -f description="⏳ ${{ env.NOT_READY_LABEL }} 라벨 제거 후 검사 진행"
+            -f description="not-ready 라벨 제거 후 검사 진행"
 
           gh pr comment ${{ github.event.pull_request.number }} --body "## 📋 라벨이 추가되었습니다. 개발 완료 후 라벨을 제거하면 AI 검사가 실행됩니다."
         env:
@@ -259,10 +259,10 @@ jobs:
         run: |
           if [ "${{ steps.ai-check.outputs.result }}" = "pass" ]; then
             STATE="success"
-            DESC="✅ AI 검사 통과"
+            DESC="AI 검사 통과"
           else
             STATE="failure"
-            DESC="❌ AI 검사 실패"
+            DESC="AI 검사 실패"
           fi
 
           gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
@@ -347,14 +347,14 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
-              -f description="✅ AI 검사 ${SUCCESS}/${REQUIRED} 통과"
+              -f description="AI 검사 ${SUCCESS}/${REQUIRED} 통과"
             echo "✅ 머지 가능"
           else
             # 1개라도 실패 - Approve 필요
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=failure \
               -f context="merge-gate" \
-              -f description="❌ AI 검사 실패 ${FAILURE}개 - Approve 필요"
+              -f description="AI 검사 실패 ${FAILURE}개 - Approve 필요"
             echo "❌ 사람 승인 필요"
           fi
         env:
@@ -395,7 +395,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
-              -f description="✅ 사람 승인으로 override"
+              -f description="사람 승인으로 override"
             echo "✅ Approve로 머지 가능"
           fi
         env:
