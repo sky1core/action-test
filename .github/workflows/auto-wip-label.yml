@@ -4,9 +4,17 @@ on:
   pull_request:
     branches: [main]
 
+  # 수동 테스트용
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR 번호'
+        required: true
+        type: number
+
 jobs:
   add-wip-label:
-    if: github.event.action == 'opened'
+    if: github.event.action == 'opened' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -14,8 +22,9 @@ jobs:
     steps:
       - name: Add WIP label
         run: |
-          echo "PR #${{ github.event.pull_request.number }}에 wip 라벨을 추가합니다."
-          gh pr edit ${{ github.event.pull_request.number }} --add-label "wip"
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.inputs.pr_number }}"
+          echo "PR #${PR_NUMBER}에 wip 라벨을 추가합니다."
+          gh pr edit ${PR_NUMBER} --add-label "wip"
           echo "✅ wip 라벨 추가 완료"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -23,7 +32,8 @@ jobs:
 
       - name: Post comment
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body "## 📋 WIP 라벨이 추가되었습니다
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.inputs.pr_number }}"
+          gh pr comment ${PR_NUMBER} --body "## 📋 WIP 라벨이 추가되었습니다
 
 **AI 코드 검사 프로세스:**
 1. 개발 완료 후 **wip 라벨을 제거**하세요
