@@ -79,6 +79,8 @@ jobs:
       next_slot: ${{ steps.check.outputs.next_slot }}
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Determine PR info
         id: pr-info
         run: |
