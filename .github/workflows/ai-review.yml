@@ -49,16 +49,7 @@ jobs:
             -f context="merge-gate" \
             -f description="⏳ ${{ env.NOT_READY_LABEL }} 라벨 제거 후 검사 진행"
 
-          gh pr comment ${{ github.event.pull_request.number }} --body "## 📋 ${{ env.NOT_READY_LABEL }} 라벨이 추가되었습니다
-
-**AI 코드 검사 프로세스:**
-1. 개발 중에는 라벨이 붙어있어 검사가 실행되지 않습니다
-2. 개발 완료 후 **${{ env.NOT_READY_LABEL }} 라벨을 제거**하세요
-3. 라벨 제거 시 AI 검사가 자동으로 실행됩니다
-4. 머지하려면 **${{ env.REQUIRED_COUNT }}개**의 AI 검사 통과가 필요합니다
-
-> 💡 라벨이 붙어있으면 push해도 AI 검사가 실행되지 않아 비용이 절감됩니다.
-"
+          gh pr comment ${{ github.event.pull_request.number }} --body "## 📋 라벨이 추가되었습니다. 개발 완료 후 라벨을 제거하면 AI 검사가 실행됩니다."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
