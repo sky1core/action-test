@@ -33,7 +33,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
-              -f description="✅ 사람 승인으로 override (@${{ github.event.review.user.login }})"
+              -f description="사람 승인으로 override (@${{ github.event.review.user.login }})"
 
             gh pr comment $PR_NUMBER --body "## ✅ Merge Gate Override
 
