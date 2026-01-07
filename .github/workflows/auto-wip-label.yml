@@ -2,11 +2,11 @@ name: Auto WIP Label
 
 on:
   pull_request:
-    types: [opened]
     branches: [main]
 
 jobs:
   add-wip-label:
+    if: github.event.action == 'opened'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
