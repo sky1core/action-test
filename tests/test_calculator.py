@@ -1,5 +1,5 @@
 import pytest
-from src.calculator import add, subtract, multiply, divide
+from src.calculator import add, subtract, multiply, divide, absolute
 
 
 class TestAdd:
@@ -36,3 +36,11 @@ class TestDivide:
     def test_divide_by_zero(self):
         with pytest.raises(ValueError, match="Cannot divide by zero"):
             divide(10, 0)
+
+
+class TestAbsolute:
+    def test_negative(self):
+        assert absolute(-5) == 5
+
+    def test_positive(self):
+        assert absolute(5) == 5
