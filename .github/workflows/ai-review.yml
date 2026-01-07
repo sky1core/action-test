@@ -289,20 +289,19 @@ jobs:
             STATUS="실패"
           fi
 
-          BODY="## ${EMOJI} AI 코드 검사 #${SLOT} - ${STATUS}
+          echo "## ${EMOJI} AI 코드 검사 #${SLOT} - ${STATUS}" > comment.txt
+          echo "" >> comment.txt
+          echo "**요약**: ${SUMMARY}" >> comment.txt
+          echo "" >> comment.txt
+          echo "### 🎭 오늘의 Joke" >> comment.txt
+          echo "> ${JOKE}" >> comment.txt
+          echo "" >> comment.txt
+          echo "\`ID: ${JOKE_ID}\`" >> comment.txt
+          echo "" >> comment.txt
+          echo "---" >> comment.txt
+          echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')" >> comment.txt
 
-**요약**: ${SUMMARY}
-
-### 🎭 오늘의 Joke
-> ${JOKE}
-
-\`ID: ${JOKE_ID}\`
-
----
-🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')
-"
-
-          gh pr comment ${{ needs.check-conditions.outputs.pr_number }} --body "$BODY"
+          gh pr comment ${{ needs.check-conditions.outputs.pr_number }} --body-file comment.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
