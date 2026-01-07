@@ -372,6 +372,8 @@ jobs:
       pull-requests: read
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Check for approvals
         run: |
           HEAD_SHA="${{ needs.check-conditions.outputs.head_sha }}"
