@@ -49,14 +49,69 @@ jobs:
             -f context="merge-gate" \
             -f description="not-ready 라벨 제거 후 검사 진행"
 
-          gh pr comment ${{ github.event.pull_request.number }} --body "## 📋 라벨이 추가되었습니다. 개발 완료 후 라벨을 제거하면 AI 검사가 실행됩니다."
+          cat > comment.md << 'EOF'
+          ### AI 코드 검사 안내
+
+          `${{ env.NOT_READY_LABEL }}` 라벨이 자동으로 추가되었습니다.
+
+          **진행 방법:**
+          1. 개발 중에는 라벨을 유지하세요 (검사 스킵, 비용 절감)
+          2. 개발 완료 후 라벨을 제거하면 테스트 → AI 검사가 실행됩니다
+          3. 머지하려면 **${{ env.REQUIRED_COUNT }}개**의 AI 검사 통과가 필요합니다
+          4. AI 검사 실패 시 사람 Approve로 override 가능
+          EOF
+          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
-  # 테스트 먼저 실행
-  test:
+  # 라벨 체크 (테스트 전에 먼저 확인)
+  check-label:
     if: github.event.action != 'opened'
+    runs-on: ubuntu-latest
+    outputs:
+      should_continue: ${{ steps.check.outputs.should_continue }}
+      pr_number: ${{ steps.check.outputs.pr_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check label
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUMBER="${{ github.event.inputs.pr_number }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            PR_NUMBER=$(gh pr list --head "${{ github.ref_name }}" --json number -q '.[0].number')
+          else
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          fi
+
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "PR 없음 - 스킵"
+            echo "should_continue=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 라벨 확인 (수동 실행은 라벨 무시)
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            HAS_LABEL=$(gh pr view $PR_NUMBER --json labels --jq '[.labels[].name] | map(select(. == "${{ env.NOT_READY_LABEL }}")) | length')
+            if [ "$HAS_LABEL" != "0" ]; then
+              echo "🚧 라벨 있음 - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          echo "should_continue=true" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 테스트 실행 (라벨 없을 때만)
+  test:
+    if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
+    needs: check-label
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,8 +124,8 @@ jobs:
 
   # PR 정보 확인 및 검사 필요 여부 판단
   check-conditions:
-    if: github.event.action != 'opened'
-    needs: test
+    if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
+    needs: [check-label, test]
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
@@ -81,62 +136,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Determine PR info
-        id: pr-info
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            PR_NUMBER="${{ github.event.inputs.pr_number }}"
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            # push 이벤트에서 PR 찾기
-            PR_NUMBER=$(gh pr list --head "${{ github.ref_name }}" --json number -q '.[0].number')
-          else
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-          fi
-
-          if [ -z "$PR_NUMBER" ]; then
-            echo "PR을 찾을 수 없습니다."
-            echo "pr_found=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "pr_found=true" >> $GITHUB_OUTPUT
-
-          # PR 상세 정보 조회
-          PR_INFO=$(gh pr view $PR_NUMBER --json headRefOid,labels)
-          HEAD_SHA=$(echo "$PR_INFO" | jq -r '.headRefOid')
-          HAS_NOT_READY=$(echo "$PR_INFO" | jq --arg label "${{ env.NOT_READY_LABEL }}" '[.labels[].name] | map(select(. == $label)) | length')
-
-          echo "has_not_ready=$HAS_NOT_READY" >> $GITHUB_OUTPUT
-          echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Check if should run
         id: check
         run: |
-          PR_FOUND="${{ steps.pr-info.outputs.pr_found }}"
-          HAS_NOT_READY="${{ steps.pr-info.outputs.has_not_ready }}"
-          PR_NUMBER="${{ steps.pr-info.outputs.pr_number }}"
-          HEAD_SHA="${{ steps.pr-info.outputs.head_sha }}"
+          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
           EVENT="${{ github.event_name }}"
-
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+          # PR HEAD SHA 조회
+          HEAD_SHA=$(gh pr view $PR_NUMBER --json headRefOid --jq '.headRefOid')
           echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
-
-          # PR 없으면 스킵
-          if [ "$PR_FOUND" != "true" ]; then
-            echo "❌ PR을 찾을 수 없음"
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # not-ready 라벨 있으면 스킵 (수동 실행 제외)
-          if [ "$HAS_NOT_READY" != "0" ] && [ "$EVENT" != "workflow_dispatch" ]; then
-            echo "❌ ${{ env.NOT_READY_LABEL }} 라벨 있음 - 검사 스킵"
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
 
           # 기존 status 확인
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses --jq '[.[] | select(.context | startswith("ai-review-"))]')
