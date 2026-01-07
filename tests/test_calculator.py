@@ -1,5 +1,5 @@
 import pytest
-from src.calculator import add, subtract, multiply, divide
+from src.calculator import add, subtract, multiply, divide, modulo
 
 
 class TestAdd:
@@ -36,3 +36,12 @@ class TestDivide:
     def test_divide_by_zero(self):
         with pytest.raises(ValueError, match="Cannot divide by zero"):
             divide(10, 0)
+
+
+class TestModulo:
+    def test_positive_numbers(self):
+        assert modulo(10, 3) == 1
+
+    def test_modulo_by_zero(self):
+        with pytest.raises(ValueError, match="Cannot modulo by zero"):
+            modulo(10, 0)
