@@ -1,0 +1,49 @@
+name: Approval Override
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  override-gate:
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: read
+
+    steps:
+      - name: Override merge-gate if needed
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          echo "🔍 PR #$PR_NUMBER 에 Approve가 추가되었습니다."
+
+          # 현재 merge-gate 상태 확인
+          GATE_STATUS=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
+            --jq '[.[] | select(.context == "merge-gate")] | .[0]')
+
+          GATE_STATE=$(echo "$GATE_STATUS" | jq -r '.state // "none"')
+
+          echo "현재 merge-gate 상태: $GATE_STATE"
+
+          # 실패 상태면 override
+          if [ "$GATE_STATE" = "failure" ]; then
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=success \
+              -f context="merge-gate" \
+              -f description="✅ 사람 승인으로 override (@${{ github.event.review.user.login }})"
+
+            gh pr comment $PR_NUMBER --body "## ✅ Merge Gate Override
+
+**@${{ github.event.review.user.login }}**의 승인으로 AI 검사 실패가 override 되었습니다.
+
+머지가 가능합니다.
+"
+            echo "✅ Override 완료"
+          else
+            echo "ℹ️ Override 불필요 (상태: $GATE_STATE)"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
