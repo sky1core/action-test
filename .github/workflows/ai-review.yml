@@ -1,11 +1,12 @@
 name: AI Code Review
 
 on:
-  # wip 라벨 제거 시 자동 실행
+  # PR 생성 시 라벨 추가, 라벨 제거 시 검사 실행
   pull_request:
-    types: [unlabeled]
+    types: [opened, unlabeled]
+    branches: [main]
 
-  # wip 라벨 없는 상태에서 push 시 자동 실행
+  # 라벨 없는 상태에서 push 시 자동 실행
   push:
     branches-ignore:
       - main
@@ -27,10 +28,44 @@ concurrency:
 env:
   REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}
   COOLDOWN_MINUTES: 5
+  NOT_READY_LABEL: "🚧 not-ready"
 
 jobs:
+  # PR 생성 시 라벨 추가
+  add-label:
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      statuses: write
+    steps:
+      - name: Create and add label
+        run: |
+          gh label create "${{ env.NOT_READY_LABEL }}" --description "AI 검사 대기 중" --color fbca04 || true
+          gh pr edit ${{ github.event.pull_request.number }} --add-label "${{ env.NOT_READY_LABEL }}"
+
+          gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            -f state=pending \
+            -f context="merge-gate" \
+            -f description="⏳ ${{ env.NOT_READY_LABEL }} 라벨 제거 후 검사 진행"
+
+          gh pr comment ${{ github.event.pull_request.number }} --body "## 📋 ${{ env.NOT_READY_LABEL }} 라벨이 추가되었습니다
+
+**AI 코드 검사 프로세스:**
+1. 개발 중에는 라벨이 붙어있어 검사가 실행되지 않습니다
+2. 개발 완료 후 **${{ env.NOT_READY_LABEL }} 라벨을 제거**하세요
+3. 라벨 제거 시 AI 검사가 자동으로 실행됩니다
+4. 머지하려면 **${{ env.REQUIRED_COUNT }}개**의 AI 검사 통과가 필요합니다
+
+> 💡 라벨이 붙어있으면 push해도 AI 검사가 실행되지 않아 비용이 절감됩니다.
+"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
   # 테스트 먼저 실행
   test:
+    if: github.event.action != 'opened'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +78,7 @@ jobs:
 
   # PR 정보 확인 및 검사 필요 여부 판단
   check-conditions:
+    if: github.event.action != 'opened'
     needs: test
     runs-on: ubuntu-latest
     outputs:
@@ -76,9 +112,9 @@ jobs:
           # PR 상세 정보 조회
           PR_INFO=$(gh pr view $PR_NUMBER --json headRefOid,labels)
           HEAD_SHA=$(echo "$PR_INFO" | jq -r '.headRefOid')
-          HAS_WIP=$(echo "$PR_INFO" | jq '[.labels[].name] | map(select(. == "wip")) | length')
+          HAS_NOT_READY=$(echo "$PR_INFO" | jq --arg label "${{ env.NOT_READY_LABEL }}" '[.labels[].name] | map(select(. == $label)) | length')
 
-          echo "has_wip=$HAS_WIP" >> $GITHUB_OUTPUT
+          echo "has_not_ready=$HAS_NOT_READY" >> $GITHUB_OUTPUT
           echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,7 +123,7 @@ jobs:
         id: check
         run: |
           PR_FOUND="${{ steps.pr-info.outputs.pr_found }}"
-          HAS_WIP="${{ steps.pr-info.outputs.has_wip }}"
+          HAS_NOT_READY="${{ steps.pr-info.outputs.has_not_ready }}"
           PR_NUMBER="${{ steps.pr-info.outputs.pr_number }}"
           HEAD_SHA="${{ steps.pr-info.outputs.head_sha }}"
           EVENT="${{ github.event_name }}"
@@ -102,9 +138,9 @@ jobs:
             exit 0
           fi
 
-          # wip 라벨 있으면 스킵 (수동 실행 제외)
-          if [ "$HAS_WIP" != "0" ] && [ "$EVENT" != "workflow_dispatch" ]; then
-            echo "❌ wip 라벨 있음 - 검사 스킵"
+          # not-ready 라벨 있으면 스킵 (수동 실행 제외)
+          if [ "$HAS_NOT_READY" != "0" ] && [ "$EVENT" != "workflow_dispatch" ]; then
+            echo "❌ ${{ env.NOT_READY_LABEL }} 라벨 있음 - 검사 스킵"
             echo "should_run=false" >> $GITHUB_OUTPUT
             exit 0
           fi
