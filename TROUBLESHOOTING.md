@@ -23,10 +23,10 @@ Draft 변환이 필요하면 PAT 또는 GitHub App 토큰이 필요합니다.
 Status description에 이모지(4-byte Unicode)를 넣으면 실패합니다.
 ```yaml
 # ❌ 실패
--f description="✅ AI 검사 통과"
+-f description="✅ AI 리뷰 통과"
 
 # ✅ 성공
--f description="AI 검사 통과"
+-f description="AI 리뷰 통과"
 ```
 
 ### YAML 멀티라인 문자열
@@ -85,7 +85,7 @@ Error: refusing to allow an OAuth App to create or update workflow without workf
 
 ### 검사가 스킵됨
 - `🚧 not-ready` 라벨이 붙어있는지 확인
-- 쿨다운 시간 내인지 확인 (기본 5분)
+- 쿨다운 시간 내인지 확인 (기본 15분)
 - 이미 N개 검사가 완료되었는지 확인
 
 ### 푸시했더니 이전 통과 기록이 사라짐
@@ -100,7 +100,7 @@ workflow_dispatch는 **main 브랜치의 workflow 파일**을 사용합니다. P
 
 해결: workflow 변경은 main에 머지한 후 수동 실행
 
-### AI 검사가 pending 상태로 멈춤
+### AI 리뷰가 pending 상태로 멈춤
 AI API 호출이 실패하거나 워크플로우가 중단되면 슬롯이 pending 상태로 남습니다.
 
 증상:

@@ -21,8 +21,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}
-  COOLDOWN_MINUTES: ${{ vars.AI_REVIEW_COOLDOWN_MINUTES || 5 }}
+  REQUIRED_COUNT: 3
+  COOLDOWN_MINUTES: 15
   NOT_READY_LABEL: "🚧 not-ready"
 
 jobs:
@@ -37,7 +37,7 @@ jobs:
     steps:
       - name: Create and add label
         run: |
-          gh label create "${{ env.NOT_READY_LABEL }}" --description "AI 검사 대기 중" --color fbca04 || true
+          gh label create "${{ env.NOT_READY_LABEL }}" --description "AI 리뷰 대기 중" --color fbca04 || true
           gh pr edit ${{ github.event.pull_request.number }} --add-label "${{ env.NOT_READY_LABEL }}"
 
           gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
@@ -205,6 +205,7 @@ jobs:
     if: needs.check-conditions.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: write
       statuses: write
 
@@ -213,11 +214,6 @@ jobs:
       slot: ${{ needs.check-conditions.outputs.next_slot }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Get PR diff
         id: diff
         run: |
@@ -227,13 +223,14 @@ jobs:
           echo "📊 Diff 크기: $DIFF_SIZE bytes"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
       - name: Set pending status
         run: |
           gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
             -f state=pending \
             -f context="ai-review-${{ needs.check-conditions.outputs.next_slot }}" \
-            -f description="AI 검사 진행 중..."
+            -f description="AI 리뷰 진행 중..."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -275,10 +272,10 @@ jobs:
         run: |
           if [ "${{ steps.ai-check.outputs.result }}" = "pass" ]; then
             STATE="success"
-            DESC="AI 검사 통과"
+            DESC="AI 리뷰 통과"
           else
             STATE="failure"
-            DESC="AI 검사 실패"
+            DESC="AI 리뷰 실패"
           fi
 
           gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
@@ -354,7 +351,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=pending \
               -f context="merge-gate" \
-              -f description="AI 검사 ${TOTAL}/${REQUIRED} 완료"
+              -f description="AI 리뷰 ${TOTAL}/${REQUIRED} 완료"
             echo "⏳ 추가 검사 필요"
             exit 0
           fi
@@ -364,7 +361,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=pending \
               -f context="merge-gate" \
-              -f description="AI 검사 진행 중 (${PENDING}개)"
+              -f description="AI 리뷰 진행 중 (${PENDING}개)"
             echo "⏳ 검사 진행 중"
             exit 0
           fi
@@ -375,14 +372,14 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
-              -f description="AI 검사 ${SUCCESS}/${REQUIRED} 통과"
+              -f description="AI 리뷰 ${SUCCESS}/${REQUIRED} 통과"
             echo "✅ 머지 가능"
           else
             # 1개라도 실패 - Approve 필요
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=failure \
               -f context="merge-gate" \
-              -f description="AI 검사 실패 ${FAILURE}개 - Approve 필요"
+              -f description="AI 리뷰 실패 ${FAILURE}개 - Approve 필요"
             echo "❌ 사람 승인 필요"
           fi
         env:
