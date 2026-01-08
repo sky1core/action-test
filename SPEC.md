@@ -85,8 +85,12 @@
 ## 머지 조건
 
 ### Q: 머지하려면 어떤 조건이 필요한가?
-- **방법 1**: 같은 커밋에서 N개 AI 리뷰가 전부 통과 → `merge-gate` = success
+- **방법 1**: 단위테스트 통과 + 같은 커밋에서 N개 AI 리뷰가 전부 통과 → `merge-gate` = success
 - **방법 2**: 사람이 Approve → `merge-gate` = success (override)
+
+### Q: 단위테스트 없이 AI 리뷰만 통과하면?
+- `merge-gate` = failure
+- 사람 Approve 필요
 
 ### Q: N개 중 일부만 통과하면?
 - 예: 3개 중 2개 통과, 1개 실패
