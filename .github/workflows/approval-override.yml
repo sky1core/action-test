@@ -21,29 +21,29 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Override merge-gate if needed
+      - name: Override Review Status if needed
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
 
           echo "🔍 PR #$PR_NUMBER 에 Approve가 추가되었습니다."
 
-          # 현재 merge-gate 상태 확인
+          # 현재 Review Status 상태 확인
           GATE_STATUS=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
-            --jq '[.[] | select(.context == "merge-gate")] | .[0]')
+            --jq '[.[] | select(.context == "Review Status")] | .[0]')
 
           GATE_STATE=$(echo "$GATE_STATUS" | jq -r '.state // "none"')
 
-          echo "현재 merge-gate 상태: $GATE_STATE"
+          echo "현재 Review Status 상태: $GATE_STATE"
 
           # success가 아니면 override (pending, failure 모두)
           if [ "$GATE_STATE" != "success" ]; then
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
-              -f context="merge-gate" \
+              -f context="Review Status" \
               -f description="Overridden by approval (@${{ github.event.review.user.login }})"
 
-            printf '## ✅ Merge Gate Override\n\n**@%s**의 승인으로 AI 리뷰 실패가 override 되었습니다.\n\n머지가 가능합니다.' "${{ github.event.review.user.login }}" > comment.md
+            printf '## ✅ Merge Gate Override\n\n**@%s**의 승인으로 Review Status가 override 되었습니다.\n\n머지가 가능합니다.' "${{ github.event.review.user.login }}" > comment.md
             gh pr comment $PR_NUMBER --body-file comment.md
             echo "✅ Override 완료"
           else
@@ -65,7 +65,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Restore merge-gate if needed
+      - name: Restore Review Status if needed
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
@@ -84,15 +84,15 @@ jobs:
             exit 0
           fi
 
-          # 현재 merge-gate 상태 확인
+          # 현재 Review Status 상태 확인
           GATE_STATUS=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
-            --jq '[.[] | select(.context == "merge-gate")] | .[0]')
+            --jq '[.[] | select(.context == "Review Status")] | .[0]')
 
           GATE_STATE=$(echo "$GATE_STATUS" | jq -r '.state // "none"')
           GATE_DESC=$(echo "$GATE_STATUS" | jq -r '.description // ""')
 
-          echo "현재 merge-gate 상태: $GATE_STATE"
-          echo "현재 merge-gate 설명: $GATE_DESC"
+          echo "현재 Review Status 상태: $GATE_STATE"
+          echo "현재 Review Status 설명: $GATE_DESC"
 
           # override로 success가 된 상태인지 확인
           if [ "$GATE_STATE" != "success" ]; then
@@ -121,12 +121,12 @@ jobs:
           if [ "$FAILURE" -gt 0 ]; then
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=failure \
-              -f context="merge-gate" \
+              -f context="Review Status" \
               -f description="AI review failed (${FAILURE}) - Approval required"
 
-            printf '## ⚠️ Merge Gate 복원\n\nApprove가 취소되어 merge-gate가 다시 failure 상태가 되었습니다.\n\n머지하려면 다시 Approve가 필요합니다.' > comment.md
+            printf '## ⚠️ Merge Gate 복원\n\nApprove가 취소되어 Review Status가 다시 failure 상태가 되었습니다.\n\n머지하려면 다시 Approve가 필요합니다.' > comment.md
             gh pr comment $PR_NUMBER --body-file comment.md
-            echo "⚠️ merge-gate를 failure로 복원"
+            echo "⚠️ Review Status를 failure로 복원"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
