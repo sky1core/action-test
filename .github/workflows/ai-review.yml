@@ -44,7 +44,7 @@ jobs:
     steps:
       - name: Create and add label
         run: |
-          gh label create "${{ env.NOT_READY_LABEL }}" --description "AI 리뷰 대기 중" --color fbca04 || true
+          gh label create "${{ env.NOT_READY_LABEL }}" --description "리뷰 준비 안됨" --color fbca04 || true
           gh pr edit ${{ github.event.pull_request.number }} --add-label "${{ env.NOT_READY_LABEL }}"
 
           gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
