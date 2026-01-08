@@ -32,6 +32,7 @@ jobs:
     permissions:
       pull-requests: write
       statuses: write
+      issues: write
     steps:
       - name: Create and add label
         run: |
@@ -327,7 +328,7 @@ jobs:
 
           # 모든 ai-review status 조회 (context별 최신 상태만)
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
-            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(.[0])')
+            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(max_by(.updated_at))')
 
           TOTAL=$(echo "$STATUSES" | jq 'length')
           SUCCESS=$(echo "$STATUSES" | jq '[.[] | select(.state == "success")] | length')
@@ -346,7 +347,7 @@ jobs:
           fi
 
           # N개 채워짐 - 결과 판정
-          if [ "$FAILURE" -eq 0 ]; then
+          if [ "$SUCCESS" -eq "$REQUIRED" ]; then
             # 전부 통과
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
@@ -385,9 +386,9 @@ jobs:
           GATE_STATE=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
             --jq '[.[] | select(.context == "merge-gate")] | .[0].state // "pending"')
 
-          # 이미 성공이면 스킵
-          if [ "$GATE_STATE" = "success" ]; then
-            echo "✅ 이미 통과 상태"
+          # failure 상태가 아니면 override 불필요
+          if [ "$GATE_STATE" != "failure" ]; then
+            echo "ℹ️ Override 불필요 (상태: $GATE_STATE)"
             exit 0
           fi
 
