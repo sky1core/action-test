@@ -58,7 +58,7 @@ jobs:
 
           gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             -f state=pending \
-            -f context="merge-gate" \
+            -f context="Review Status" \
             -f description="Remove not-ready label to start review"
 
           cat > comment.md << EOF
@@ -175,12 +175,12 @@ jobs:
                 REMAINING=$(((COOLDOWN_SEC - DIFF) / 60 + 1))
                 echo "❌ 쿨다운 중 - ${REMAINING}분 후 가능"
 
-                # 쿨다운 시에도 merge-gate를 pending으로 설정 (새 커밋에 status 필요)
+                # 쿨다운 시에도 Review Status를 pending으로 설정 (새 커밋에 status 필요)
                 PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
                 HEAD_SHA=$(gh pr view $PR_NUMBER --json headRefOid --jq '.headRefOid')
                 gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
                   -f state=pending \
-                  -f context="merge-gate" \
+                  -f context="Review Status" \
                   -f description="Cooldown: ${REMAINING}min remaining"
 
                 echo "should_skip=true" >> $GITHUB_OUTPUT
@@ -231,10 +231,10 @@ jobs:
             STATE="failure"
             DESC="Unit test failed"
 
-            # unit-test 실패 시 merge-gate도 failure로 설정
+            # unit-test 실패 시 Review Status도 failure로 설정
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=failure \
-              -f context="merge-gate" \
+              -f context="Review Status" \
               -f description="Unit test failed - Approval required"
           fi
 
@@ -579,8 +579,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
-  # 종합 판정 (merge-gate) + Approve 확인
-  merge-gate:
+  # 종합 판정 (Review Status) + Approve 확인
+  review-status:
     needs: [ai-review]
     if: always() && needs.ai-review.result == 'success'
     runs-on: ubuntu-latest
@@ -598,7 +598,7 @@ jobs:
 
           # HEAD_SHA가 비어있으면 (ai-review가 슬롯 부족으로 스킵된 경우) 종료
           if [ -z "$HEAD_SHA" ]; then
-            echo "ℹ️ ai-review가 스킵됨 - merge-gate 업데이트 불필요"
+            echo "ℹ️ ai-review가 스킵됨 - Review Status 업데이트 불필요"
             echo "should_check_approval=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -612,7 +612,7 @@ jobs:
           if [ "$UNIT_TEST_STATE" != "success" ]; then
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=failure \
-              -f context="merge-gate" \
+              -f context="Review Status" \
               -f description="Unit test not passed - Approval required"
             echo "❌ Unit test 미통과"
             echo "should_check_approval=true" >> $GITHUB_OUTPUT
@@ -637,7 +637,7 @@ jobs:
           if [ "$TOTAL" -lt "$REQUIRED" ]; then
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=pending \
-              -f context="merge-gate" \
+              -f context="Review Status" \
               -f description="AI review ${TOTAL}/${REQUIRED} completed"
             echo "⏳ 추가 리뷰 필요"
             echo "should_check_approval=false" >> $GITHUB_OUTPUT
@@ -648,7 +648,7 @@ jobs:
           if [ "$PENDING" -gt 0 ]; then
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=pending \
-              -f context="merge-gate" \
+              -f context="Review Status" \
               -f description="AI review in progress (${PENDING})"
             echo "⏳ 리뷰 진행 중"
             echo "should_check_approval=false" >> $GITHUB_OUTPUT
@@ -660,7 +660,7 @@ jobs:
             # 충분히 통과
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
-              -f context="merge-gate" \
+              -f context="Review Status" \
               -f description="Unit test + AI review ${SUCCESS}/${REQUIRED} passed"
             echo "✅ 머지 가능"
             echo "should_check_approval=false" >> $GITHUB_OUTPUT
@@ -668,7 +668,7 @@ jobs:
             # 1개라도 실패 - Approve 필요
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=failure \
-              -f context="merge-gate" \
+              -f context="Review Status" \
               -f description="AI review failed (${FAILURE}) - Approval required"
             echo "❌ 사람 승인 필요"
             echo "should_check_approval=true" >> $GITHUB_OUTPUT
@@ -693,7 +693,7 @@ jobs:
           if [ "$APPROVALS" -gt 0 ]; then
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
-              -f context="merge-gate" \
+              -f context="Review Status" \
               -f description="Overridden by approval"
             echo "✅ Approve로 머지 가능"
           fi
