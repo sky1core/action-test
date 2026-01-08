@@ -103,7 +103,7 @@ jobs:
 
           # AI 검사 결과 다시 계산 (context별 최신 상태만)
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
-            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(.[0])')
+            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(sort_by(.state == "pending") | .[0])')
 
           TOTAL=$(echo "$STATUSES" | jq 'length')
           FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | length')
