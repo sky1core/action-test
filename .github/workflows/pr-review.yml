@@ -319,7 +319,8 @@ jobs:
   # AI 코드 리뷰 실행
   ai-review:
     needs: check-conditions
-    if: needs.check-conditions.outputs.should_run == 'true'
+    # always() 필요: check-conditions가 always()를 사용하므로 outputs 접근에 필요
+    if: always() && needs.check-conditions.result == 'success' && needs.check-conditions.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -514,7 +515,7 @@ jobs:
   # 종합 판정 (merge-gate)
   update-gate:
     needs: [check-conditions, ai-review]
-    if: always() && needs.check-conditions.outputs.should_run == 'true'
+    if: always() && needs.check-conditions.result == 'success' && needs.check-conditions.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     permissions:
       statuses: write
@@ -596,7 +597,7 @@ jobs:
   # Approve 시 merge-gate override
   check-approval:
     needs: [check-conditions, ai-review, update-gate]
-    if: always() && needs.check-conditions.outputs.should_run == 'true'
+    if: always() && needs.check-conditions.result == 'success' && needs.check-conditions.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     permissions:
       statuses: write
