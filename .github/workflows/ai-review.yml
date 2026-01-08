@@ -180,19 +180,20 @@ jobs:
             exit 0
           fi
 
-          # 자동 실행일 때만 쿨다운 체크
+          # 자동 실행일 때만 쿨다운 체크 (PR 전체 기준)
           if [ "$EVENT" != "workflow_dispatch" ]; then
-            # 마지막 리뷰 시간 확인
-            LAST_CHECK=$(echo "$STATUSES" | jq -r 'sort_by(.updated_at) | last | .updated_at // empty')
+            # PR 코멘트에서 마지막 AI 리뷰 시간 확인
+            LAST_REVIEW=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+              --jq '[.[] | select(.body | test("^## [✅❌] AI Review")) | .created_at] | sort | last // empty')
 
-            if [ -n "$LAST_CHECK" ]; then
-              LAST_SEC=$(date -d "$LAST_CHECK" +%s)
+            if [ -n "$LAST_REVIEW" ]; then
+              LAST_SEC=$(date -d "$LAST_REVIEW" +%s)
               NOW_SEC=$(date +%s)
               DIFF=$((NOW_SEC - LAST_SEC))
               COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
 
               if [ $DIFF -lt $COOLDOWN_SEC ]; then
-                REMAINING=$(((COOLDOWN_SEC - DIFF) / 60))
+                REMAINING=$(((COOLDOWN_SEC - DIFF) / 60 + 1))
                 echo "❌ 쿨다운 중 - ${REMAINING}분 후 가능"
                 echo "should_run=false" >> $GITHUB_OUTPUT
                 exit 0
