@@ -327,13 +327,7 @@ jobs:
             REST=$(echo "$BODY" | tail -n +3)
 
             # details로 감싸기
-            NEW_BODY="${HEADER}
-
-<details>
-<summary>펼쳐서 보기</summary>
-
-${REST}
-</details>"
+            printf -v NEW_BODY '%s\n\n<details>\n<summary>펼쳐서 보기</summary>\n\n%s\n</details>' "$HEADER" "$REST"
 
             # 코멘트 업데이트
             gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -X PATCH -f body="$NEW_BODY"
