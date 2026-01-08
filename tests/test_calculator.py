@@ -36,3 +36,9 @@ class TestDivide:
     def test_divide_by_zero(self):
         with pytest.raises(ValueError, match="Cannot divide by zero"):
             divide(10, 0)
+
+
+class TestFail:
+    def test_intentional_failure(self):
+        """의도적으로 실패하는 테스트"""
+        assert 1 == 2
