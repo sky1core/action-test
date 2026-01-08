@@ -43,13 +43,7 @@ jobs:
               -f context="merge-gate" \
               -f description="사람 승인으로 override (@${{ github.event.review.user.login }})"
 
-            cat > comment.md << 'EOF'
-## ✅ Merge Gate Override
-
-**@${{ github.event.review.user.login }}**의 승인으로 AI 리뷰 실패가 override 되었습니다.
-
-머지가 가능합니다.
-EOF
+            printf '## ✅ Merge Gate Override\n\n**@%s**의 승인으로 AI 리뷰 실패가 override 되었습니다.\n\n머지가 가능합니다.' "${{ github.event.review.user.login }}" > comment.md
             gh pr comment $PR_NUMBER --body-file comment.md
             echo "✅ Override 완료"
           else
@@ -130,13 +124,7 @@ EOF
               -f context="merge-gate" \
               -f description="AI 리뷰 실패 ${FAILURE}개 - Approve 필요"
 
-            cat > comment.md << 'EOF'
-## ⚠️ Merge Gate 복원
-
-Approve가 취소되어 merge-gate가 다시 failure 상태가 되었습니다.
-
-머지하려면 다시 Approve가 필요합니다.
-EOF
+            printf '## ⚠️ Merge Gate 복원\n\nApprove가 취소되어 merge-gate가 다시 failure 상태가 되었습니다.\n\n머지하려면 다시 Approve가 필요합니다.' > comment.md
             gh pr comment $PR_NUMBER --body-file comment.md
             echo "⚠️ merge-gate를 failure로 복원"
           fi
