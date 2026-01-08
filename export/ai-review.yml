@@ -1,0 +1,432 @@
+name: AI Code Review
+
+on:
+  # PR 생성 시 라벨 추가, 라벨 제거/푸시 시 검사 실행
+  pull_request:
+    types: [opened, unlabeled, synchronize]
+    # ⚠️ 동기화 필요: 대상 브랜치는 approval-override.yml의 job if 조건과 함께 변경할 것.
+    branches: [main, master]
+
+  # 수동 실행 (추가 검사용)
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR 번호'
+        required: true
+        type: number
+
+# 동일 PR에 대해 순차 실행 (동시 실행 방지)
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}
+  COOLDOWN_MINUTES: ${{ vars.AI_REVIEW_COOLDOWN_MINUTES || 5 }}
+  NOT_READY_LABEL: "🚧 not-ready"
+
+jobs:
+  # PR 생성 시 라벨 추가
+  add-label:
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      statuses: write
+      issues: write
+    steps:
+      - name: Create and add label
+        run: |
+          gh label create "${{ env.NOT_READY_LABEL }}" --description "AI 검사 대기 중" --color fbca04 || true
+          gh pr edit ${{ github.event.pull_request.number }} --add-label "${{ env.NOT_READY_LABEL }}"
+
+          gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            -f state=pending \
+            -f context="merge-gate" \
+            -f description="not-ready 라벨 제거 후 검사 진행"
+
+          cat > comment.md << 'EOF'
+          ### AI 코드 검사 안내
+
+          `${{ env.NOT_READY_LABEL }}` 라벨이 자동으로 추가되었습니다.
+
+          **사용 방법:**
+          1. 이 라벨이 붙어있는 동안은 검사가 실행되지 않습니다. 개발 중에는 그대로 두세요.
+          2. 검사를 받으려면 라벨을 제거하세요. 자동으로 검사가 **1회** 실행됩니다.
+          3. 이후 푸시할 때마다 검사가 **1회** 자동 실행됩니다. 단, **푸시하면 이전 통과 기록은 무효화**됩니다.
+          4. 머지하려면 **같은 커밋**에서 총 **${{ env.REQUIRED_COUNT }}개**의 검사를 통과해야 합니다. 추가 검사는 [여기서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)하세요.
+          5. 검사가 실패해도 사람이 Approve하면 머지할 수 있습니다.
+          EOF
+          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+  # 라벨 체크 (테스트 전에 먼저 확인)
+  check-label:
+    if: github.event.action != 'opened'
+    runs-on: ubuntu-latest
+    outputs:
+      should_continue: ${{ steps.check.outputs.should_continue }}
+      pr_number: ${{ steps.check.outputs.pr_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check label
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUMBER="${{ github.event.inputs.pr_number }}"
+          else
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          fi
+
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "PR 없음 - 스킵"
+            echo "should_continue=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # unlabeled 이벤트: not-ready 라벨 제거가 아니면 스킵
+          if [ "${{ github.event.action }}" = "unlabeled" ]; then
+            REMOVED_LABEL="${{ github.event.label.name }}"
+            if [ "$REMOVED_LABEL" != "${{ env.NOT_READY_LABEL }}" ]; then
+              echo "다른 라벨($REMOVED_LABEL) 제거 - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          # 라벨 확인 (수동 실행은 라벨 무시)
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            HAS_LABEL=$(gh pr view $PR_NUMBER --json labels --jq '[.labels[].name] | map(select(. == "${{ env.NOT_READY_LABEL }}")) | length')
+            if [ "$HAS_LABEL" != "0" ]; then
+              echo "🚧 라벨 있음 - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          echo "should_continue=true" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 테스트 실행 (라벨 없을 때만)
+  test:
+    if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
+    needs: check-label
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Run tests
+        run: uv run pytest tests/ -v
+
+  # PR 정보 확인 및 검사 필요 여부 판단
+  check-conditions:
+    if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
+    needs: [check-label, test]
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      pr_number: ${{ steps.check.outputs.pr_number }}
+      head_sha: ${{ steps.check.outputs.head_sha }}
+      next_slot: ${{ steps.check.outputs.next_slot }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if should run
+        id: check
+        run: |
+          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+          EVENT="${{ github.event_name }}"
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+          # PR HEAD SHA 조회
+          HEAD_SHA=$(gh pr view $PR_NUMBER --json headRefOid --jq '.headRefOid')
+          echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+
+          # 기존 status 확인
+          STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses --jq '[.[] | select(.context | startswith("ai-review-"))]')
+
+          # 빈 슬롯 찾기
+          NEXT_SLOT=0
+          for i in $(seq 1 ${{ env.REQUIRED_COUNT }}); do
+            EXISTS=$(echo "$STATUSES" | jq --arg ctx "ai-review-$i" '[.[] | select(.context == $ctx)] | length')
+            if [ "$EXISTS" = "0" ]; then
+              NEXT_SLOT=$i
+              break
+            fi
+          done
+
+          echo "next_slot=$NEXT_SLOT" >> $GITHUB_OUTPUT
+
+          # 모든 슬롯 채워짐
+          if [ "$NEXT_SLOT" = "0" ]; then
+            echo "❌ 이미 ${{ env.REQUIRED_COUNT }}개 검사 완료"
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 자동 실행일 때만 쿨다운 체크
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            # 마지막 검사 시간 확인
+            LAST_CHECK=$(echo "$STATUSES" | jq -r 'sort_by(.updated_at) | last | .updated_at // empty')
+
+            if [ -n "$LAST_CHECK" ]; then
+              LAST_SEC=$(date -d "$LAST_CHECK" +%s)
+              NOW_SEC=$(date +%s)
+              DIFF=$((NOW_SEC - LAST_SEC))
+              COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
+
+              if [ $DIFF -lt $COOLDOWN_SEC ]; then
+                REMAINING=$(((COOLDOWN_SEC - DIFF) / 60))
+                echo "❌ 쿨다운 중 - ${REMAINING}분 후 가능"
+                echo "should_run=false" >> $GITHUB_OUTPUT
+                exit 0
+              fi
+            fi
+          fi
+
+          echo "✅ 검사 실행 (슬롯: ai-review-$NEXT_SLOT)"
+          echo "should_run=true" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # AI 코드 검사 실행
+  ai-review:
+    needs: check-conditions
+    if: needs.check-conditions.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      statuses: write
+
+    outputs:
+      result: ${{ steps.ai-check.outputs.result }}
+      slot: ${{ needs.check-conditions.outputs.next_slot }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          gh pr diff ${{ needs.check-conditions.outputs.pr_number }} > diff.txt
+          DIFF_SIZE=$(wc -c < diff.txt)
+          echo "diff_size=$DIFF_SIZE" >> $GITHUB_OUTPUT
+          echo "📊 Diff 크기: $DIFF_SIZE bytes"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set pending status
+        run: |
+          gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
+            -f state=pending \
+            -f context="ai-review-${{ needs.check-conditions.outputs.next_slot }}" \
+            -f description="AI 검사 진행 중..."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run AI Review
+        id: ai-check
+        run: |
+          echo "🤖 AI 코드 검사 실행 중..."
+
+          # icanhazdadjoke API 호출
+          RESPONSE=$(curl -s -H "Accept: application/json" https://icanhazdadjoke.com/)
+          JOKE=$(echo "$RESPONSE" | jq -r '.joke')
+          JOKE_ID=$(echo "$RESPONSE" | jq -r '.id')
+
+          echo "🎭 받은 joke: $JOKE"
+          echo "🔑 joke ID: $JOKE_ID"
+
+          # 글자수로 pass/fail 판정 (홀수: pass, 짝수: fail)
+          JOKE_LENGTH=${#JOKE}
+          echo "📏 글자수: $JOKE_LENGTH"
+
+          if [ $((JOKE_LENGTH % 2)) -eq 1 ]; then
+            RESULT="pass"
+            SUMMARY="코드 품질이 양호합니다. (joke 글자수: ${JOKE_LENGTH}자 - 홀수)"
+          else
+            RESULT="fail"
+            SUMMARY="개선이 필요한 부분이 있습니다. (joke 글자수: ${JOKE_LENGTH}자 - 짝수)"
+          fi
+
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
+          echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
+
+          # joke를 파일로 저장 (multiline 대응)
+          echo "$JOKE" > joke.txt
+          echo "$JOKE_ID" > joke_id.txt
+
+          echo "결과: $RESULT"
+
+      - name: Set final status
+        run: |
+          if [ "${{ steps.ai-check.outputs.result }}" = "pass" ]; then
+            STATE="success"
+            DESC="AI 검사 통과"
+          else
+            STATE="failure"
+            DESC="AI 검사 실패"
+          fi
+
+          gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
+            -f state="$STATE" \
+            -f context="ai-review-${{ needs.check-conditions.outputs.next_slot }}" \
+            -f description="$DESC"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post PR comment
+        run: |
+          SLOT="${{ needs.check-conditions.outputs.next_slot }}"
+          RESULT="${{ steps.ai-check.outputs.result }}"
+          SUMMARY="${{ steps.ai-check.outputs.summary }}"
+          JOKE=$(cat joke.txt)
+          JOKE_ID=$(cat joke_id.txt)
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          if [ "$RESULT" = "pass" ]; then
+            EMOJI="✅"
+            STATUS="통과"
+          else
+            EMOJI="❌"
+            STATUS="실패"
+          fi
+
+          echo "## ${EMOJI} AI 코드 검사 #${SLOT} - ${STATUS}" > comment.txt
+          echo "" >> comment.txt
+          echo "**요약**: ${SUMMARY}" >> comment.txt
+          echo "" >> comment.txt
+          echo "### 🎭 오늘의 Joke" >> comment.txt
+          echo "> ${JOKE}" >> comment.txt
+          echo "" >> comment.txt
+          echo "\`ID: ${JOKE_ID}\`" >> comment.txt
+          echo "" >> comment.txt
+          echo "---" >> comment.txt
+          echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')" >> comment.txt
+
+          gh pr comment ${{ needs.check-conditions.outputs.pr_number }} --body-file comment.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 종합 판정 (merge-gate)
+  update-gate:
+    needs: [check-conditions, ai-review]
+    if: always() && needs.check-conditions.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: read
+
+    steps:
+      - name: Calculate merge gate
+        run: |
+          HEAD_SHA="${{ needs.check-conditions.outputs.head_sha }}"
+          PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
+          REQUIRED=${{ env.REQUIRED_COUNT }}
+
+          # 모든 ai-review status 조회 (context별 최신 상태만)
+          # ⚠️ 동기화 필요: 이 집계 로직은 approval-override.yml에도 있음. 수정 시 함께 변경할 것.
+          STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
+            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(sort_by([.updated_at, (.state != "pending")]) | last)')
+
+          TOTAL=$(echo "$STATUSES" | jq 'length')
+          SUCCESS=$(echo "$STATUSES" | jq '[.[] | select(.state == "success")] | length')
+          FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | length')
+          PENDING=$(echo "$STATUSES" | jq '[.[] | select(.state == "pending")] | length')
+
+          echo "📊 검사 현황: 총 $TOTAL / 필요 $REQUIRED (통과: $SUCCESS, 실패: $FAILURE, 진행중: $PENDING)"
+
+          # 아직 N개 안 채워짐
+          if [ "$TOTAL" -lt "$REQUIRED" ]; then
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=pending \
+              -f context="merge-gate" \
+              -f description="AI 검사 ${TOTAL}/${REQUIRED} 완료"
+            echo "⏳ 추가 검사 필요"
+            exit 0
+          fi
+
+          # pending이 남아있으면 대기
+          if [ "$PENDING" -gt 0 ]; then
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=pending \
+              -f context="merge-gate" \
+              -f description="AI 검사 진행 중 (${PENDING}개)"
+            echo "⏳ 검사 진행 중"
+            exit 0
+          fi
+
+          # N개 채워짐 - 결과 판정
+          if [ "$SUCCESS" -ge "$REQUIRED" ]; then
+            # 충분히 통과
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=success \
+              -f context="merge-gate" \
+              -f description="AI 검사 ${SUCCESS}/${REQUIRED} 통과"
+            echo "✅ 머지 가능"
+          else
+            # 1개라도 실패 - Approve 필요
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=failure \
+              -f context="merge-gate" \
+              -f description="AI 검사 실패 ${FAILURE}개 - Approve 필요"
+            echo "❌ 사람 승인 필요"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Approve 시 merge-gate override
+  check-approval:
+    needs: [check-conditions, ai-review, update-gate]
+    if: always() && needs.check-conditions.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for approvals
+        run: |
+          HEAD_SHA="${{ needs.check-conditions.outputs.head_sha }}"
+          PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
+
+          # 현재 merge-gate 상태 확인
+          GATE_STATE=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
+            --jq '[.[] | select(.context == "merge-gate")] | .[0].state // "pending"')
+
+          # failure 상태가 아니면 override 불필요
+          if [ "$GATE_STATE" != "failure" ]; then
+            echo "ℹ️ Override 불필요 (상태: $GATE_STATE)"
+            exit 0
+          fi
+
+          # Approve 있는지 확인
+          APPROVALS=$(gh pr view $PR_NUMBER --json reviews \
+            --jq '[.reviews[] | select(.state == "APPROVED")] | length')
+
+          echo "👥 Approve 수: $APPROVALS"
+
+          if [ "$APPROVALS" -gt 0 ]; then
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=success \
+              -f context="merge-gate" \
+              -f description="사람 승인으로 override"
+            echo "✅ Approve로 머지 가능"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,137 @@
+name: Approval Override
+
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+
+env:
+  REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}
+
+jobs:
+  # Approve 추가 시 override
+  # ⚠️ 동기화 필요: 대상 브랜치(main/master)는 ai-review.yml의 branches와 함께 변경할 것.
+  override-gate:
+    if: |
+      github.event.action == 'submitted' &&
+      github.event.review.state == 'approved' &&
+      (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master')
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: read
+
+    steps:
+      - name: Override merge-gate if needed
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          echo "🔍 PR #$PR_NUMBER 에 Approve가 추가되었습니다."
+
+          # 현재 merge-gate 상태 확인
+          GATE_STATUS=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
+            --jq '[.[] | select(.context == "merge-gate")] | .[0]')
+
+          GATE_STATE=$(echo "$GATE_STATUS" | jq -r '.state // "none"')
+
+          echo "현재 merge-gate 상태: $GATE_STATE"
+
+          # 실패 상태면 override
+          if [ "$GATE_STATE" = "failure" ]; then
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=success \
+              -f context="merge-gate" \
+              -f description="사람 승인으로 override (@${{ github.event.review.user.login }})"
+
+            gh pr comment $PR_NUMBER --body "## ✅ Merge Gate Override
+
+**@${{ github.event.review.user.login }}**의 승인으로 AI 검사 실패가 override 되었습니다.
+
+머지가 가능합니다.
+"
+            echo "✅ Override 완료"
+          else
+            echo "ℹ️ Override 불필요 (상태: $GATE_STATE)"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Approve 취소 시 원래 상태로 복원
+  # ⚠️ 동기화 필요: 대상 브랜치(main/master)는 ai-review.yml의 branches와 함께 변경할 것.
+  restore-gate:
+    if: |
+      github.event.action == 'dismissed' &&
+      (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master')
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: read
+
+    steps:
+      - name: Restore merge-gate if needed
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          echo "🔍 PR #$PR_NUMBER 에서 리뷰가 취소되었습니다."
+
+          # 남은 Approve 수 확인
+          APPROVALS=$(gh pr view $PR_NUMBER --json reviews \
+            --jq '[.reviews[] | select(.state == "APPROVED")] | length')
+
+          echo "남은 Approve 수: $APPROVALS"
+
+          # Approve가 남아있으면 복원 불필요
+          if [ "$APPROVALS" -gt 0 ]; then
+            echo "ℹ️ 다른 Approve가 있어서 복원 불필요"
+            exit 0
+          fi
+
+          # 현재 merge-gate 상태 확인
+          GATE_STATUS=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
+            --jq '[.[] | select(.context == "merge-gate")] | .[0]')
+
+          GATE_STATE=$(echo "$GATE_STATUS" | jq -r '.state // "none"')
+          GATE_DESC=$(echo "$GATE_STATUS" | jq -r '.description // ""')
+
+          echo "현재 merge-gate 상태: $GATE_STATE"
+          echo "현재 merge-gate 설명: $GATE_DESC"
+
+          # override로 success가 된 상태인지 확인
+          if [ "$GATE_STATE" != "success" ]; then
+            echo "ℹ️ 복원 불필요 (상태: $GATE_STATE)"
+            exit 0
+          fi
+
+          if [[ "$GATE_DESC" != *"override"* ]]; then
+            echo "ℹ️ 복원 불필요 (검사 통과로 success됨)"
+            exit 0
+          fi
+
+          # AI 검사 결과 다시 계산 (context별 최신 상태만)
+          # ⚠️ 동기화 필요: 이 집계 로직은 ai-review.yml에도 있음. 수정 시 함께 변경할 것.
+          STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
+            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(sort_by([.updated_at, (.state != "pending")]) | last)')
+
+          TOTAL=$(echo "$STATUSES" | jq 'length')
+          FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | length')
+
+          echo "검사 현황: 총 $TOTAL, 실패 $FAILURE"
+
+          # 실패가 있으면 다시 failure로
+          if [ "$FAILURE" -gt 0 ]; then
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=failure \
+              -f context="merge-gate" \
+              -f description="AI 검사 실패 ${FAILURE}개 - Approve 필요"
+
+            gh pr comment $PR_NUMBER --body "## ⚠️ Merge Gate 복원
+
+Approve가 취소되어 merge-gate가 다시 failure 상태가 되었습니다.
+
+머지하려면 다시 Approve가 필요합니다.
+"
+            echo "⚠️ merge-gate를 failure로 복원"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
