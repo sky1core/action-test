@@ -12,6 +12,9 @@ class TestAdd:
     def test_zero(self):
         assert add(0, 0) == 0
 
+    def test_mixed_signs(self):
+        assert add(-5, 10) == 5
+
 
 class TestSubtract:
     def test_positive_numbers(self):
