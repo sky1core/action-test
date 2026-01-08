@@ -99,3 +99,13 @@ Error: refusing to allow an OAuth App to create or update workflow without workf
 workflow_dispatch는 **main 브랜치의 workflow 파일**을 사용합니다. PR 브랜치에서 workflow를 수정해도 수동 실행 시 반영되지 않습니다.
 
 해결: workflow 변경은 main에 머지한 후 수동 실행
+
+### AI 검사가 pending 상태로 멈춤
+AI API 호출이 실패하거나 워크플로우가 중단되면 슬롯이 pending 상태로 남습니다.
+
+증상:
+- `ai-review-N`이 pending 상태로 고정
+- `merge-gate`도 pending 유지
+- Approve해도 override 안 됨 (failure만 override 가능)
+
+해결: 푸시해서 새 커밋으로 재시작 (이전 기록 전부 무효화)

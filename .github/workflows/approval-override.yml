@@ -57,6 +57,7 @@ EOF
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
   # Approve 취소 시 원래 상태로 복원
   # ⚠️ 동기화 필요: 대상 브랜치(main/master)는 ai-review.yml의 branches와 함께 변경할 것.
@@ -105,6 +106,8 @@ EOF
             exit 0
           fi
 
+          # ⚠️ 의존성: description에 "override" 포함 여부로 판단
+          # ai-review.yml의 check-approval과 이 파일의 override-gate 모두 "override" 포함해야 함
           if [[ "$GATE_DESC" != *"override"* ]]; then
             echo "ℹ️ 복원 불필요 (검사 통과로 success됨)"
             exit 0
@@ -139,3 +142,4 @@ EOF
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
