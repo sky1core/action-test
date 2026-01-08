@@ -187,6 +187,26 @@ jobs:
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
+      - name: Set unit test status
+        if: steps.cooldown.outputs.skipped != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          HEAD_SHA=$(gh pr view ${{ needs.check-label.outputs.pr_number }} --json headRefOid --jq '.headRefOid')
+
+          if [ "${{ steps.unit-test.outputs.exit_code }}" = "0" ]; then
+            STATE="success"
+            DESC="Unit test passed"
+          else
+            STATE="failure"
+            DESC="Unit test failed"
+          fi
+
+          gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+            -f state="$STATE" \
+            -f context="unit-test" \
+            -f description="$DESC"
+
       - name: Comment on unit test failure
         if: steps.cooldown.outputs.skipped != 'true' && steps.unit-test.outputs.exit_code != '0'
         env:
@@ -507,6 +527,21 @@ jobs:
           PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
           REQUIRED=${{ env.REQUIRED_COUNT }}
 
+          # unit-test status 확인
+          UNIT_TEST_STATE=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
+            --jq '[.[] | select(.context == "unit-test")] | sort_by(.updated_at) | last | .state // "none"')
+
+          echo "📋 Unit test: $UNIT_TEST_STATE"
+
+          if [ "$UNIT_TEST_STATE" != "success" ]; then
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=failure \
+              -f context="merge-gate" \
+              -f description="Unit test not passed - Approval required"
+            echo "❌ Unit test 미통과"
+            exit 0
+          fi
+
           # 모든 ai-review status 조회 (context별 최신 상태만)
           # ⚠️ 동기화 필요: 이 집계 로직은 approval-override.yml에도 있음. 수정 시 함께 변경할 것.
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
@@ -517,7 +552,7 @@ jobs:
           FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | length')
           PENDING=$(echo "$STATUSES" | jq '[.[] | select(.state == "pending")] | length')
 
-          echo "📊 리뷰 현황: 총 $TOTAL / 필요 $REQUIRED (통과: $SUCCESS, 실패: $FAILURE, 진행중: $PENDING)"
+          echo "📊 AI 리뷰 현황: 총 $TOTAL / 필요 $REQUIRED (통과: $SUCCESS, 실패: $FAILURE, 진행중: $PENDING)"
 
           # 아직 N개 안 채워짐
           if [ "$TOTAL" -lt "$REQUIRED" ]; then
@@ -545,7 +580,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
-              -f description="AI review ${SUCCESS}/${REQUIRED} passed"
+              -f description="Unit test + AI review ${SUCCESS}/${REQUIRED} passed"
             echo "✅ 머지 가능"
           else
             # 1개라도 실패 - Approve 필요
