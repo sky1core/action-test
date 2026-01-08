@@ -319,7 +319,7 @@ jobs:
           # diff 내용 읽기
           DIFF_CONTENT=$(cat diff.txt | head -c 10000)
 
-          # Bedrock API 호출 (Nova Micro)
+          # Bedrock API 호출 (Tool Use로 구조화된 응답 강제)
           RESPONSE=$(curl -s -X POST "https://bedrock-runtime.us-east-1.amazonaws.com/model/${{ env.AI_MODEL }}/converse" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.BEDROCK_API_KEY }}" \
@@ -327,31 +327,61 @@ jobs:
               "messages": [
                 {
                   "role": "user",
-                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 문제를 등급별로 분류하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n\n## 판정 기준\n- 🔴 Critical 있으면 → FAIL\n- 🟡 Warning 있으면 → FAIL\n- 🟢 Info만 있거나 문제 없음 → PASS\n\n## 응답 형식\n아래 예시처럼 정확히 응답하세요.\n\n성공 예시:\nPASS\n\n🟢 Info: 참고 사항\n1. 개선 제안 내용\n\n실패 예시:\nFAIL\n\n🟡 Warning: 수정 권장\n1. 문제 내용\n\n## 코드 변경사항\n```diff\n" + $diff + "\n```")}]
+                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 submit_review 도구로 결과를 제출하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n\n## 판정 기준\n- 🔴 Critical 있으면 → fail\n- 🟡 Warning 있으면 → fail\n- 🟢 Info만 있거나 문제 없음 → pass\n\n## 코드 변경사항\n```diff\n" + $diff + "\n```")}]
                 }
-              ]
+              ],
+              "toolConfig": {
+                "tools": [
+                  {
+                    "toolSpec": {
+                      "name": "submit_review",
+                      "description": "코드 리뷰 결과를 제출합니다",
+                      "inputSchema": {
+                        "json": {
+                          "type": "object",
+                          "properties": {
+                            "result": {
+                              "type": "string",
+                              "enum": ["pass", "fail"],
+                              "description": "리뷰 결과 (pass 또는 fail)"
+                            },
+                            "details": {
+                              "type": "string",
+                              "description": "상세 리뷰 내용 (위험도 등급별 문제점 포함)"
+                            }
+                          },
+                          "required": ["result", "details"]
+                        }
+                      }
+                    }
+                  }
+                ],
+                "toolChoice": {
+                  "tool": {
+                    "name": "submit_review"
+                  }
+                }
+              }
             }')")
 
           echo "API 응답: $RESPONSE"
 
-          # 응답에서 텍스트 추출
-          AI_RESPONSE=$(echo "$RESPONSE" | jq -r '.output.message.content[0].text // empty')
+          # Tool Use 응답에서 결과 추출
+          TOOL_INPUT=$(echo "$RESPONSE" | jq -r '.output.message.content[0].toolUse.input // empty')
 
-          if [ -z "$AI_RESPONSE" ]; then
+          if [ -z "$TOOL_INPUT" ]; then
             echo "API 호출 실패"
             echo "$RESPONSE" > review.txt
             RESULT="fail"
             SUMMARY="API 호출 실패"
           else
-            echo "$AI_RESPONSE" > review.txt
+            RESULT=$(echo "$TOOL_INPUT" | jq -r '.result')
+            DETAILS=$(echo "$TOOL_INPUT" | jq -r '.details')
+            echo "$DETAILS" > review.txt
 
-            # 첫 줄에서 PASS/FAIL 판정
-            FIRST_LINE=$(echo "$AI_RESPONSE" | head -1 | tr '[:lower:]' '[:upper:]')
-            if echo "$FIRST_LINE" | grep -q "PASS"; then
-              RESULT="pass"
+            if [ "$RESULT" = "pass" ]; then
               SUMMARY="AI review passed"
             else
-              RESULT="fail"
               SUMMARY="Issues found in AI review"
             fi
           fi
