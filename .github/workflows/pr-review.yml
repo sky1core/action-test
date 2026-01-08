@@ -213,25 +213,41 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+          HEAD_SHA=$(gh pr view $PR_NUMBER --json headRefOid --jq '.headRefOid')
+          SHORT_SHA="${HEAD_SHA:0:7}"
 
-          printf '## ❌ ${{ env.TEST_PREFIX }} - FAIL\n\nAI review skipped due to test failure.\n\n```\n' > comment.md
-          tail -50 test_output.txt >> comment.md
-          printf '\n```\n' >> comment.md
+          {
+            printf '## ❌ ${{ env.TEST_PREFIX }} - FAIL\n\nAI review skipped due to test failure.\n\n```\n'
+            tail -50 test_output.txt
+            printf '\n```\n\n📌 %s' "$SHORT_SHA"
+          } > comment.md
 
           gh pr comment "$PR_NUMBER" --body-file comment.md
 
       - name: Collapse old unit test failure comments
-        if: steps.cooldown.outputs.skipped != 'true' && steps.unit-test.outputs.exit_code == '0'
+        if: steps.cooldown.outputs.skipped != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+          HEAD_SHA=$(gh pr view $PR_NUMBER --json headRefOid --jq '.headRefOid')
+          SHORT_SHA="${HEAD_SHA:0:7}"
 
-          COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '[.[] | select(.body | startswith("## ❌ ${{ env.TEST_PREFIX }}")) | select(.body | contains("<details>") | not) | .id] | .[]')
+          # 현재 커밋 SHA가 아닌 이전 단위테스트 실패 댓글만 접기
+          COMMENTS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | startswith("## ❌ ${{ env.TEST_PREFIX }}")) | select(.body | contains("<details>") | not) | {id, body}]')
 
-          for COMMENT_ID in $COMMENT_IDS; do
-            BODY=$(gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" --jq '.body')
+          echo "$COMMENTS" | jq -c '.[]' | while read -r comment; do
+            COMMENT_ID=$(echo "$comment" | jq -r '.id')
+            BODY=$(echo "$comment" | jq -r '.body')
+
+            # 현재 커밋의 댓글이면 스킵
+            if echo "$BODY" | grep -q "📌 ${SHORT_SHA}"; then
+              echo "현재 커밋 댓글 스킵: $COMMENT_ID"
+              continue
+            fi
+
+            echo "접기 처리: 코멘트 $COMMENT_ID"
             FIRST_LINE=$(echo "$BODY" | head -1)
             REST=$(echo "$BODY" | tail -n +2)
 
@@ -240,7 +256,6 @@ jobs:
             gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
               -X PATCH \
               -F body=@new_body.md
-            echo "Collapsed comment $COMMENT_ID"
           done
 
       - name: Fail if unit tests failed
@@ -446,22 +461,32 @@ jobs:
       - name: Collapse old review comments
         run: |
           PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
+          HEAD_SHA="${{ needs.check-conditions.outputs.head_sha }}"
+          SHORT_SHA="${HEAD_SHA:0:7}"
 
-          # 이전 AI 리뷰 코멘트 ID 목록 가져오기
-          COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.REVIEW_PREFIX }}")) | select(.body | contains("<details open>")) | .id] | .[]')
+          # 현재 커밋 SHA가 아닌 이전 리뷰 코멘트만 접기
+          # (펼쳐져 있고 + 현재 SHA가 아닌 것)
+          COMMENTS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.REVIEW_PREFIX }}")) | select(.body | contains("<details open>")) | {id, body}]')
 
-          for COMMENT_ID in $COMMENT_IDS; do
+          echo "$COMMENTS" | jq -c '.[]' | while read -r comment; do
+            COMMENT_ID=$(echo "$comment" | jq -r '.id')
+            BODY=$(echo "$comment" | jq -r '.body')
+
+            # 현재 커밋의 댓글이면 스킵
+            if echo "$BODY" | grep -q "📌 ${SHORT_SHA}"; then
+              echo "현재 커밋 댓글 스킵: $COMMENT_ID"
+              continue
+            fi
+
             echo "접기 처리: 코멘트 $COMMENT_ID"
-
-            # 코멘트 본문 가져오기
-            BODY=$(gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" --jq '.body')
 
             # <details open> → <details> 로 변경 (접힌 상태로)
             NEW_BODY=$(echo "$BODY" | sed 's/<details open>/<details>/')
 
             # 코멘트 업데이트
-            gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -X PATCH -f body="$NEW_BODY"
+            printf '%s' "$NEW_BODY" > collapse_body.md
+            gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -X PATCH -F body=@collapse_body.md
           done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -486,6 +511,9 @@ jobs:
             STATUS="FAIL"
           fi
 
+          HEAD_SHA="${{ needs.check-conditions.outputs.head_sha }}"
+          SHORT_SHA="${HEAD_SHA:0:7}"
+
           {
             echo "## ${EMOJI} ${{ env.REVIEW_PREFIX }} #${SLOT} - ${STATUS}"
             echo "🔴 ${CRITICAL} | 🟡 ${WARNING} | 🟢 ${INFO}"
@@ -496,7 +524,7 @@ jobs:
             echo "${REVIEW}"
             echo ""
             echo "---"
-            echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S') | 📌 ${SHORT_SHA}"
             echo "</details>"
           } > comment.txt
 
