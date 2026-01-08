@@ -338,7 +338,7 @@ jobs:
 
           # 모든 ai-review status 조회 (context별 최신 상태만)
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
-            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(sort_by(.state == "pending") | .[0])')
+            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(sort_by([.updated_at, (.state != "pending")]) | last)')
 
           TOTAL=$(echo "$STATUSES" | jq 'length')
           SUCCESS=$(echo "$STATUSES" | jq '[.[] | select(.state == "success")] | length')
