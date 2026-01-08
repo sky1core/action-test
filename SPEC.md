@@ -145,24 +145,25 @@
 
 ## Approve Override
 
+### Q: Approve 하는 방법은?
+1. PR 페이지에서 "Files changed" 탭 클릭
+2. 오른쪽 위 "Review changes" 버튼 클릭
+3. "Approve" 선택 후 "Submit review"
+
 ### Q: Approve의 역할은?
-- **검사 면제가 아님**. N개 검사는 무조건 실행됨.
-- Approve의 역할: N개 검사 중 실패가 있을 때 그걸 무시하고 머지 가능하게 해줌
+- Approve = 머지 허용
+- Approve가 있으면 merge-gate가 즉시 success가 됨
 
 ### Q: Approve하면 어떻게 되나?
-- `merge-gate`가 failure 상태면 success로 override됨
-- `merge-gate`가 pending이면 override 안 됨 (N개 채워야 함)
+- `merge-gate`가 즉시 success로 override됨 (pending이든 failure든)
 - `merge-gate`가 이미 success면 변화 없음
 
 ### Q: Approve 있는 상태에서 푸시하면?
 - 새 SHA에서 검사가 다시 시작됨
-- N개 검사가 채워질 때까지 merge-gate = pending
-- pending 상태에서는 Approve가 있어도 override 안 됨
-- N개 채운 후: 전부 통과면 success, 실패 있으면 failure
-- failure일 때 기존 Approve가 있으면 success로 override됨
+- 기존 Approve가 유지되므로 merge-gate는 바로 success로 override됨
 
 ### Q: 검사를 안 받고 Approve만으로 머지할 수 있나?
-- 불가능. 최소 N개 검사가 완료되어야 함 (전부 실패해도 N개는 채워야 함)
+- 가능. Approve가 있으면 검사 결과와 무관하게 머지 가능
 
 ### Q: Approve가 취소(dismiss)되면?
 - 다른 Approve가 남아있으면: 변화 없음

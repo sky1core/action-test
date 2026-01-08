@@ -406,9 +406,9 @@ jobs:
           GATE_STATE=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
             --jq '[.[] | select(.context == "merge-gate")] | .[0].state // "pending"')
 
-          # failure 상태가 아니면 override 불필요
-          if [ "$GATE_STATE" != "failure" ]; then
-            echo "ℹ️ Override 불필요 (상태: $GATE_STATE)"
+          # 이미 success면 override 불필요
+          if [ "$GATE_STATE" = "success" ]; then
+            echo "ℹ️ Override 불필요 (이미 success)"
             exit 0
           fi
 

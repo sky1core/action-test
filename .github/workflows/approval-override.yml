@@ -36,8 +36,8 @@ jobs:
 
           echo "현재 merge-gate 상태: $GATE_STATE"
 
-          # 실패 상태면 override
-          if [ "$GATE_STATE" = "failure" ]; then
+          # success가 아니면 override (pending, failure 모두)
+          if [ "$GATE_STATE" != "success" ]; then
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
