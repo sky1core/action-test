@@ -301,13 +301,48 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Collapse old review comments
+        run: |
+          PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
+
+          # 이전 AI 리뷰 코멘트 찾아서 접기
+          gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | startswith("## ✅ AI 코드 리뷰") or startswith("## ❌ AI 코드 리뷰")) | {id, body}' | while read -r line; do
+            COMMENT_ID=$(echo "$line" | jq -r '.id')
+            BODY=$(echo "$line" | jq -r '.body')
+
+            # 이미 접혀있으면 스킵
+            if echo "$BODY" | grep -q "<details>"; then
+              continue
+            fi
+
+            # 첫 줄(제목)과 나머지 분리
+            TITLE=$(echo "$BODY" | head -1)
+            REST=$(echo "$BODY" | tail -n +2)
+
+            # details로 감싸기
+            NEW_BODY="${TITLE}
+<details>
+<summary>펼쳐서 보기</summary>
+${REST}
+</details>"
+
+            # 코멘트 업데이트
+            gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -X PATCH -f body="$NEW_BODY"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Post PR comment
         run: |
           SLOT="${{ needs.check-conditions.outputs.next_slot }}"
           RESULT="${{ steps.ai-check.outputs.result }}"
-          SUMMARY="${{ steps.ai-check.outputs.summary }}"
           REVIEW=$(cat review.txt)
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # 위험도별 개수 세기
+          CRITICAL=$(echo "$REVIEW" | grep -c "🔴" || true)
+          WARNING=$(echo "$REVIEW" | grep -c "🟡" || true)
+          INFO=$(echo "$REVIEW" | grep -c "🟢" || true)
 
           if [ "$RESULT" = "pass" ]; then
             EMOJI="✅"
@@ -319,14 +354,16 @@ jobs:
 
           {
             echo "## ${EMOJI} AI 코드 리뷰 #${SLOT} - ${STATUS}"
+            echo "🔴 ${CRITICAL} | 🟡 ${WARNING} | 🟢 ${INFO}"
             echo ""
-            echo "**요약**: ${SUMMARY}"
+            echo "<details open>"
+            echo "<summary>상세 내용</summary>"
             echo ""
-            echo "### 리뷰 내용"
             echo "${REVIEW}"
             echo ""
             echo "---"
             echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "</details>"
           } > comment.txt
 
           gh pr comment ${{ needs.check-conditions.outputs.pr_number }} --body-file comment.txt
