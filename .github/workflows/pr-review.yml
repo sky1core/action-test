@@ -1,4 +1,4 @@
-name: AI Code Review
+name: PR Review
 
 on:
   # PR 생성 시 라벨 추가, 라벨 제거/푸시 시 리뷰 실행
@@ -7,23 +7,32 @@ on:
     # ⚠️ 동기화 필요: 대상 브랜치는 approval-override.yml의 job if 조건과 함께 변경할 것.
     branches: [main, master]
 
-  # 수동 실행 (추가 리뷰용)
+  # 수동 실행
   workflow_dispatch:
     inputs:
       pr_number:
         description: 'PR 번호'
         required: true
         type: number
+      run_type:
+        description: '실행 유형'
+        required: true
+        type: choice
+        options:
+          - ai-review
+          - unit-test
 
 # 동일 PR에 대해 순차 실행 (동시 실행 방지)
 concurrency:
-  group: ai-review-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.ref }}
+  group: pr-review-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.ref }}
   cancel-in-progress: false
 
 env:
   REQUIRED_COUNT: 2
   COOLDOWN_MINUTES: 30
   NOT_READY_LABEL: "🚧 not-ready"
+  REVIEW_PREFIX: "AI Review"
+  TEST_PREFIX: "Unit Test"
   # AI 모델 선택 (Bedrock 모델 ID)
   # - us.amazon.nova-micro-v1:0 (가장 저렴, $0.035/1M)
   # - anthropic.claude-4-sonnet-20250514-v1:0 ($3/1M)
@@ -58,7 +67,7 @@ jobs:
           리뷰 받을 준비가 되면 \`${{ env.NOT_READY_LABEL }}\` 라벨을 제거하세요.
 
           - 라벨 제거 → 단위테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
-          - 추가 리뷰는 [Actions에서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)
+          - 추가 리뷰는 [Actions에서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/pr-review.yml)
           - 머지 조건: 리뷰 ${{ env.REQUIRED_COUNT }}개 통과 또는 Approve
           - 푸시하면 이전 기록 초기화 (다시 ${{ env.REQUIRED_COUNT }}개 통과 필요)
           - 자동 리뷰는 ${{ env.COOLDOWN_MINUTES }}분 간격 제한 (수동 실행은 제한 없음)
@@ -119,9 +128,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 단위테스트 실행 (라벨 없을 때만)
+  # 단위테스트 실행 (자동 또는 수동 unit-test 선택 시)
   unit-test:
-    if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
+    if: |
+      github.event.action != 'opened' &&
+      needs.check-label.outputs.should_continue == 'true' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_type == 'unit-test')
     needs: check-label
     runs-on: ubuntu-latest
     steps:
@@ -144,7 +156,7 @@ jobs:
         run: |
           PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
 
-          printf '## ❌ 단위테스트 실패\n\n단위테스트 실패로 AI 리뷰가 실행되지 않습니다.\n\n```\n' > comment.md
+          printf '## ❌ ${{ env.TEST_PREFIX }} - FAIL\n\nAI review skipped due to test failure.\n\n```\n' > comment.md
           tail -50 test_output.txt >> comment.md
           printf '\n```\n' >> comment.md
 
@@ -158,7 +170,7 @@ jobs:
           PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
 
           COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '[.[] | select(.body | startswith("## ❌ 단위테스트 실패")) | select(.body | contains("<details>") | not) | .id] | .[]')
+            --jq '[.[] | select(.body | startswith("## ❌ ${{ env.TEST_PREFIX }}")) | select(.body | contains("<details>") | not) | .id] | .[]')
 
           for COMMENT_ID in $COMMENT_IDS; do
             BODY=$(gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" --jq '.body')
@@ -173,13 +185,27 @@ jobs:
             echo "Collapsed comment $COMMENT_ID"
           done
 
+      - name: Comment on unit test success (manual only)
+        if: github.event.inputs.run_type == 'unit-test' && steps.unit-test.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "${{ needs.check-label.outputs.pr_number }}" --body "## ✅ ${{ env.TEST_PREFIX }} - PASS"
+
       - name: Fail if unit tests failed
         if: steps.unit-test.outputs.exit_code != '0'
         run: exit 1
 
   # PR 정보 확인 및 리뷰 필요 여부 판단
   check-conditions:
-    if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
+    if: |
+      always() &&
+      github.event.action != 'opened' &&
+      needs.check-label.outputs.should_continue == 'true' &&
+      (
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'ai-review') ||
+        (github.event_name != 'workflow_dispatch' && needs.unit-test.result == 'success')
+      )
     needs: [check-label, unit-test]
     runs-on: ubuntu-latest
     outputs:
@@ -228,7 +254,7 @@ jobs:
           if [ "$EVENT" != "workflow_dispatch" ]; then
             # PR 코멘트에서 마지막 AI 리뷰 시간 확인
             LAST_REVIEW=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-              --jq '[.[] | select(.body | test("^## [✅❌] AI Review")) | .created_at] | sort | last // empty')
+              --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.REVIEW_PREFIX }}")) | .created_at] | sort | last // empty')
 
             if [ -n "$LAST_REVIEW" ]; then
               LAST_SEC=$(date -d "$LAST_REVIEW" +%s)
@@ -359,7 +385,7 @@ jobs:
 
           # 이전 AI 리뷰 코멘트 ID 목록 가져오기
           COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '[.[] | select(.body | test("^## [✅❌] AI 코드 리뷰")) | select(.body | contains("<details>") | not) | .id] | .[]')
+            --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.REVIEW_PREFIX }}")) | select(.body | contains("<details>") | not) | .id] | .[]')
 
           for COMMENT_ID in $COMMENT_IDS; do
             echo "접기 처리: 코멘트 $COMMENT_ID"
@@ -401,7 +427,7 @@ jobs:
           fi
 
           {
-            echo "## ${EMOJI} AI Review #${SLOT} - ${STATUS}"
+            echo "## ${EMOJI} ${{ env.REVIEW_PREFIX }} #${SLOT} - ${STATUS}"
             echo "🔴 ${CRITICAL} | 🟡 ${WARNING} | 🟢 ${INFO}"
             echo ""
             echo "<details open>"
