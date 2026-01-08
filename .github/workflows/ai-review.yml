@@ -312,24 +312,26 @@ jobs:
         run: |
           PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
 
-          # 이전 AI 리뷰 코멘트 찾아서 접기
-          gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | startswith("## ✅ AI 코드 리뷰") or startswith("## ❌ AI 코드 리뷰")) | {id, body}' | while read -r line; do
-            COMMENT_ID=$(echo "$line" | jq -r '.id')
-            BODY=$(echo "$line" | jq -r '.body')
+          # 이전 AI 리뷰 코멘트 ID 목록 가져오기
+          COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | test("^## [✅❌] AI 코드 리뷰")) | select(.body | contains("<details>") | not) | .id] | .[]')
 
-            # 이미 접혀있으면 스킵
-            if echo "$BODY" | grep -q "<details>"; then
-              continue
-            fi
+          for COMMENT_ID in $COMMENT_IDS; do
+            echo "접기 처리: 코멘트 $COMMENT_ID"
 
-            # 첫 줄(제목)과 나머지 분리
-            TITLE=$(echo "$BODY" | head -1)
-            REST=$(echo "$BODY" | tail -n +2)
+            # 코멘트 본문 가져오기
+            BODY=$(gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" --jq '.body')
+
+            # 첫 줄(제목)과 둘째 줄(요약) 추출
+            HEADER=$(echo "$BODY" | head -2)
+            REST=$(echo "$BODY" | tail -n +3)
 
             # details로 감싸기
-            NEW_BODY="${TITLE}
+            NEW_BODY="${HEADER}
+
 <details>
 <summary>펼쳐서 보기</summary>
+
 ${REST}
 </details>"
 
@@ -366,7 +368,9 @@ ${REST}
             echo "<details open>"
             echo "<summary>상세 내용</summary>"
             echo ""
+            echo '```'
             echo "${REVIEW}"
+            echo '```'
             echo ""
             echo "---"
             echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')"
