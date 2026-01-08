@@ -349,14 +349,14 @@ jobs:
 
           if [ "$RESULT" = "pass" ]; then
             EMOJI="✅"
-            STATUS="통과"
+            STATUS="PASS"
           else
             EMOJI="❌"
-            STATUS="실패"
+            STATUS="FAIL"
           fi
 
           {
-            echo "## ${EMOJI} AI 코드 리뷰 #${SLOT} - ${STATUS}"
+            echo "## ${EMOJI} AI Review #${SLOT} - ${STATUS}"
             echo "🔴 ${CRITICAL} | 🟡 ${WARNING} | 🟢 ${INFO}"
             echo ""
             echo "<details open>"
