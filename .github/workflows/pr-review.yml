@@ -145,9 +145,9 @@ jobs:
         id: cooldown
         if: github.event_name != 'workflow_dispatch'
         run: |
-          # 워크플로우 실행 기록에서 마지막 unit-test 성공 시간 확인
-          LAST_RUN=$(gh run list --workflow=pr-review.yml --branch=${{ github.head_ref }} --json createdAt,conclusion,jobs \
-            --jq '[.[] | select(.jobs != null) | select(.jobs[] | select(.name == "unit-test" and .conclusion == "success"))] | .[0].createdAt // empty')
+          # 이전 워크플로우 실행 시간 확인 (현재 run 제외 = index 1)
+          LAST_RUN=$(gh run list --workflow=pr-review.yml --branch=${{ github.head_ref }} --json createdAt \
+            --jq '.[1].createdAt // empty')
 
           if [ -n "$LAST_RUN" ]; then
             LAST_SEC=$(date -d "$LAST_RUN" +%s)
@@ -281,26 +281,6 @@ jobs:
             echo "❌ 이미 ${{ env.REQUIRED_COUNT }}개 리뷰 완료"
             echo "should_run=false" >> $GITHUB_OUTPUT
             exit 0
-          fi
-
-          # 자동 실행일 때만 쿨다운 체크 (워크플로우 실행 기록 기준)
-          if [ "$EVENT" != "workflow_dispatch" ]; then
-            LAST_RUN=$(gh run list --workflow=pr-review.yml --branch=$HEAD_REF --json createdAt,conclusion,jobs \
-              --jq '[.[] | select(.jobs != null) | select(.jobs[] | select(.name == "ai-review" and .conclusion == "success"))] | .[0].createdAt // empty')
-
-            if [ -n "$LAST_RUN" ]; then
-              LAST_SEC=$(date -d "$LAST_RUN" +%s)
-              NOW_SEC=$(date +%s)
-              DIFF=$((NOW_SEC - LAST_SEC))
-              COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
-
-              if [ $DIFF -lt $COOLDOWN_SEC ]; then
-                REMAINING=$(((COOLDOWN_SEC - DIFF) / 60 + 1))
-                echo "❌ 쿨다운 중 - ${REMAINING}분 후 가능"
-                echo "should_run=false" >> $GITHUB_OUTPUT
-                exit 0
-              fi
-            fi
           fi
 
           echo "✅ 리뷰 실행 (슬롯: ai-review-$NEXT_SLOT)"
