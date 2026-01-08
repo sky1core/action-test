@@ -18,5 +18,3 @@ def divide(a: int, b: int) -> float:
 
 def power(base: int, exponent: int) -> float:
     return base ** exponent
-
-# Test comment
