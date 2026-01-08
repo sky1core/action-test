@@ -145,14 +145,12 @@ jobs:
         id: cooldown
         if: github.event_name != 'workflow_dispatch'
         run: |
-          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+          # 워크플로우 실행 기록에서 마지막 unit-test 성공 시간 확인
+          LAST_RUN=$(gh run list --workflow=pr-review.yml --branch=${{ github.head_ref }} --json createdAt,conclusion,jobs \
+            --jq '[.[] | select(.jobs != null) | select(.jobs[] | select(.name == "unit-test" and .conclusion == "success"))] | .[0].createdAt // empty')
 
-          # PR 코멘트에서 마지막 단위테스트 시간 확인
-          LAST_TEST=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.TEST_PREFIX }}")) | .created_at] | sort | last // empty')
-
-          if [ -n "$LAST_TEST" ]; then
-            LAST_SEC=$(date -d "$LAST_TEST" +%s)
+          if [ -n "$LAST_RUN" ]; then
+            LAST_SEC=$(date -d "$LAST_RUN" +%s)
             NOW_SEC=$(date +%s)
             DIFF=$((NOW_SEC - LAST_SEC))
             COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
@@ -256,9 +254,12 @@ jobs:
           EVENT="${{ github.event_name }}"
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
 
-          # PR HEAD SHA 조회
-          HEAD_SHA=$(gh pr view $PR_NUMBER --json headRefOid --jq '.headRefOid')
+          # PR HEAD SHA 및 브랜치명 조회
+          PR_INFO=$(gh pr view $PR_NUMBER --json headRefOid,headRefName)
+          HEAD_SHA=$(echo "$PR_INFO" | jq -r '.headRefOid')
+          HEAD_REF=$(echo "$PR_INFO" | jq -r '.headRefName')
           echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+          echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
 
           # 기존 status 확인
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses --jq '[.[] | select(.context | startswith("ai-review-"))]')
@@ -282,14 +283,13 @@ jobs:
             exit 0
           fi
 
-          # 자동 실행일 때만 쿨다운 체크 (PR 전체 기준)
+          # 자동 실행일 때만 쿨다운 체크 (워크플로우 실행 기록 기준)
           if [ "$EVENT" != "workflow_dispatch" ]; then
-            # PR 코멘트에서 마지막 AI 리뷰 시간 확인
-            LAST_REVIEW=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-              --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.REVIEW_PREFIX }}")) | .created_at] | sort | last // empty')
+            LAST_RUN=$(gh run list --workflow=pr-review.yml --branch=$HEAD_REF --json createdAt,conclusion,jobs \
+              --jq '[.[] | select(.jobs != null) | select(.jobs[] | select(.name == "ai-review" and .conclusion == "success"))] | .[0].createdAt // empty')
 
-            if [ -n "$LAST_REVIEW" ]; then
-              LAST_SEC=$(date -d "$LAST_REVIEW" +%s)
+            if [ -n "$LAST_RUN" ]; then
+              LAST_SEC=$(date -d "$LAST_RUN" +%s)
               NOW_SEC=$(date +%s)
               DIFF=$((NOW_SEC - LAST_SEC))
               COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
