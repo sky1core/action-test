@@ -24,6 +24,13 @@ env:
   REQUIRED_COUNT: 2
   COOLDOWN_MINUTES: 15
   NOT_READY_LABEL: "🚧 not-ready"
+  # AI 모델 선택 (Bedrock 모델 ID)
+  # - us.amazon.nova-micro-v1:0 (가장 저렴, $0.035/1M)
+  # - anthropic.claude-4-sonnet-20250514-v1:0 ($3/1M)
+  # - anthropic.claude-opus-4-5-20251101-v1:0 ($5/1M)
+  # - deepseek.deepseek-r1-v1:0 ($1.35/1M, 추론 특화)
+  # - moonshot.kimi-k2-thinking-v1:0 ($0.60/1M, 오픈 최고)
+  AI_MODEL: "us.amazon.nova-micro-v1:0"
 
 jobs:
   # PR 생성 시 라벨 추가
@@ -242,7 +249,7 @@ jobs:
           DIFF_CONTENT=$(cat diff.txt | head -c 10000)
 
           # Bedrock API 호출 (Nova Micro)
-          RESPONSE=$(curl -s -X POST "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1:0/converse" \
+          RESPONSE=$(curl -s -X POST "https://bedrock-runtime.us-east-1.amazonaws.com/model/${{ env.AI_MODEL }}/converse" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.BEDROCK_API_KEY }}" \
             -d "$(jq -n --arg diff "$DIFF_CONTENT" '{
