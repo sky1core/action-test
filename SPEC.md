@@ -210,15 +210,22 @@
 
 ### Q: Branch Protection을 설정 안 하면?
 - merge-gate 결과와 무관하게 머지 가능
+- 푸시해도 Approve가 유지됨
 - 검사가 의미 없어짐
 - **반드시 설정해야 함**
 
 ### Q: 어떻게 설정하나?
-- Settings → Branches → Add branch protection rule
-- Branch name pattern: `main` (또는 본인 기본 브랜치)
-- "Require status checks to pass before merging" 체크
-- "Status checks that are required"에서 `merge-gate` 추가
-- "Dismiss stale pull request approvals when new commits are pushed" 체크 → 푸시 시 기존 Approve 무효화 (필수)
+Settings → Branches → Add branch protection rule
+
+1. **Branch name pattern**: `main` (또는 본인 기본 브랜치)
+
+2. **Require a pull request before merging** 체크
+   - "Dismiss stale pull request approvals when new commits are pushed" 체크
+
+3. **Require status checks to pass before merging** 체크
+   - "Status checks that are required"에서 `merge-gate` 검색해서 추가
+
+4. **Save changes** 클릭
 
 ---
 
