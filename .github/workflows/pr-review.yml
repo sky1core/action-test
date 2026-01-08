@@ -359,6 +359,7 @@ jobs:
           echo "should_run=true" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
       - name: Get PR diff
         if: steps.check.outputs.should_run == 'true'
@@ -689,3 +690,4 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
