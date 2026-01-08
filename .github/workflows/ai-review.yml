@@ -22,7 +22,7 @@ concurrency:
 
 env:
   REQUIRED_COUNT: 2
-  COOLDOWN_MINUTES: 15
+  COOLDOWN_MINUTES: 30
   NOT_READY_LABEL: "🚧 not-ready"
   # AI 모델 선택 (Bedrock 모델 ID)
   # - us.amazon.nova-micro-v1:0 (가장 저렴, $0.035/1M)

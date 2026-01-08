@@ -85,7 +85,7 @@ Error: refusing to allow an OAuth App to create or update workflow without workf
 
 ### 리뷰가 스킵됨
 - `🚧 not-ready` 라벨이 붙어있는지 확인
-- 쿨다운 시간 내인지 확인 (기본 15분)
+- 쿨다운 시간 내인지 확인 (기본 30분)
 - 이미 N개 리뷰가 완료되었는지 확인
 
 ### 푸시했더니 이전 통과 기록이 사라짐
