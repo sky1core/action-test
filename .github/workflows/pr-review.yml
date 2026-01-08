@@ -183,6 +183,7 @@ jobs:
           echo "should_skip=false" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
   # 단위테스트 실행 (자동 또는 수동 unit-test 선택 시)
   unit-test:
