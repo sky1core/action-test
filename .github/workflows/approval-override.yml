@@ -5,7 +5,7 @@ on:
     types: [submitted, dismissed]
 
 env:
-  REQUIRED_COUNT: 3
+  REQUIRED_COUNT: 2
 
 jobs:
   # Approve 추가 시 override
@@ -43,13 +43,7 @@ jobs:
               -f context="merge-gate" \
               -f description="사람 승인으로 override (@${{ github.event.review.user.login }})"
 
-            cat > comment.md << 'EOF'
-## ✅ Merge Gate Override
-
-**@${{ github.event.review.user.login }}**의 승인으로 AI 리뷰 실패가 override 되었습니다.
-
-머지가 가능합니다.
-EOF
+            printf '## ✅ Merge Gate Override\n\n**@%s**의 승인으로 AI 리뷰 실패가 override 되었습니다.\n\n머지가 가능합니다.' "${{ github.event.review.user.login }}" > comment.md
             gh pr comment $PR_NUMBER --body-file comment.md
             echo "✅ Override 완료"
           else
@@ -109,7 +103,7 @@ EOF
           # ⚠️ 의존성: description에 "override" 포함 여부로 판단
           # ai-review.yml의 check-approval과 이 파일의 override-gate 모두 "override" 포함해야 함
           if [[ "$GATE_DESC" != *"override"* ]]; then
-            echo "ℹ️ 복원 불필요 (검사 통과로 success됨)"
+            echo "ℹ️ 복원 불필요 (리뷰 통과로 success됨)"
             exit 0
           fi
 
@@ -121,7 +115,7 @@ EOF
           TOTAL=$(echo "$STATUSES" | jq 'length')
           FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | length')
 
-          echo "검사 현황: 총 $TOTAL, 실패 $FAILURE"
+          echo "리뷰 현황: 총 $TOTAL, 실패 $FAILURE"
 
           # 실패가 있으면 다시 failure로
           if [ "$FAILURE" -gt 0 ]; then
@@ -130,13 +124,7 @@ EOF
               -f context="merge-gate" \
               -f description="AI 리뷰 실패 ${FAILURE}개 - Approve 필요"
 
-            cat > comment.md << 'EOF'
-## ⚠️ Merge Gate 복원
-
-Approve가 취소되어 merge-gate가 다시 failure 상태가 되었습니다.
-
-머지하려면 다시 Approve가 필요합니다.
-EOF
+            printf '## ⚠️ Merge Gate 복원\n\nApprove가 취소되어 merge-gate가 다시 failure 상태가 되었습니다.\n\n머지하려면 다시 Approve가 필요합니다.' > comment.md
             gh pr comment $PR_NUMBER --body-file comment.md
             echo "⚠️ merge-gate를 failure로 복원"
           fi

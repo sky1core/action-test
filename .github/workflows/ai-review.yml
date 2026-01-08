@@ -1,13 +1,13 @@
 name: AI Code Review
 
 on:
-  # PR 생성 시 라벨 추가, 라벨 제거/푸시 시 검사 실행
+  # PR 생성 시 라벨 추가, 라벨 제거/푸시 시 리뷰 실행
   pull_request:
     types: [opened, unlabeled, synchronize]
     # ⚠️ 동기화 필요: 대상 브랜치는 approval-override.yml의 job if 조건과 함께 변경할 것.
     branches: [main, master]
 
-  # 수동 실행 (추가 검사용)
+  # 수동 실행 (추가 리뷰용)
   workflow_dispatch:
     inputs:
       pr_number:
@@ -21,9 +21,16 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REQUIRED_COUNT: 3
+  REQUIRED_COUNT: 2
   COOLDOWN_MINUTES: 15
   NOT_READY_LABEL: "🚧 not-ready"
+  # AI 모델 선택 (Bedrock 모델 ID)
+  # - us.amazon.nova-micro-v1:0 (가장 저렴, $0.035/1M)
+  # - anthropic.claude-4-sonnet-20250514-v1:0 ($3/1M)
+  # - anthropic.claude-opus-4-5-20251101-v1:0 ($5/1M)
+  # - deepseek.deepseek-r1-v1:0 ($1.35/1M, 추론 특화)
+  # - moonshot.kimi-k2-thinking-v1:0 ($0.60/1M, 오픈 최고)
+  AI_MODEL: "us.amazon.nova-micro-v1:0"
 
 jobs:
   # PR 생성 시 라벨 추가
@@ -43,19 +50,18 @@ jobs:
           gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             -f state=pending \
             -f context="merge-gate" \
-            -f description="not-ready 라벨 제거 후 검사 진행"
+            -f description="not-ready 라벨 제거 후 리뷰 진행"
 
-          cat > comment.md << 'EOF'
-          ### AI 코드 검사 안내
+          cat > comment.md << EOF
+          ### AI 코드 리뷰
 
-          `${{ env.NOT_READY_LABEL }}` 라벨이 자동으로 추가되었습니다.
+          리뷰 받을 준비가 되면 \`${{ env.NOT_READY_LABEL }}\` 라벨을 제거하세요.
 
-          **사용 방법:**
-          1. 이 라벨이 붙어있는 동안은 검사가 실행되지 않습니다. 개발 중에는 그대로 두세요.
-          2. 검사를 받으려면 라벨을 제거하세요. 자동으로 검사가 **1회** 실행됩니다.
-          3. 이후 푸시할 때마다 검사가 **1회** 자동 실행됩니다. 단, **푸시하면 이전 통과 기록은 무효화**됩니다.
-          4. 머지하려면 **같은 커밋**에서 총 **${{ env.REQUIRED_COUNT }}개**의 검사를 통과해야 합니다. 추가 검사는 [여기서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)하세요.
-          5. 검사가 실패해도 사람이 Approve하면 머지할 수 있습니다.
+          - 라벨 제거 → 테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
+          - 추가 리뷰는 [Actions에서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)
+          - 머지 조건: 리뷰 ${{ env.REQUIRED_COUNT }}개 통과 또는 Approve
+          - 푸시하면 이전 기록 초기화 (다시 ${{ env.REQUIRED_COUNT }}개 통과 필요)
+          - 자동 리뷰는 ${{ env.COOLDOWN_MINUTES }}분 간격 제한 (수동 실행은 제한 없음)
           EOF
           gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
         env:
@@ -127,7 +133,7 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v
 
-  # PR 정보 확인 및 검사 필요 여부 판단
+  # PR 정보 확인 및 리뷰 필요 여부 판단
   check-conditions:
     if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
     needs: [check-label, test]
@@ -169,24 +175,25 @@ jobs:
 
           # 모든 슬롯 채워짐
           if [ "$NEXT_SLOT" = "0" ]; then
-            echo "❌ 이미 ${{ env.REQUIRED_COUNT }}개 검사 완료"
+            echo "❌ 이미 ${{ env.REQUIRED_COUNT }}개 리뷰 완료"
             echo "should_run=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # 자동 실행일 때만 쿨다운 체크
+          # 자동 실행일 때만 쿨다운 체크 (PR 전체 기준)
           if [ "$EVENT" != "workflow_dispatch" ]; then
-            # 마지막 검사 시간 확인
-            LAST_CHECK=$(echo "$STATUSES" | jq -r 'sort_by(.updated_at) | last | .updated_at // empty')
+            # PR 코멘트에서 마지막 AI 리뷰 시간 확인
+            LAST_REVIEW=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+              --jq '[.[] | select(.body | test("^## [✅❌] AI Review")) | .created_at] | sort | last // empty')
 
-            if [ -n "$LAST_CHECK" ]; then
-              LAST_SEC=$(date -d "$LAST_CHECK" +%s)
+            if [ -n "$LAST_REVIEW" ]; then
+              LAST_SEC=$(date -d "$LAST_REVIEW" +%s)
               NOW_SEC=$(date +%s)
               DIFF=$((NOW_SEC - LAST_SEC))
               COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
 
               if [ $DIFF -lt $COOLDOWN_SEC ]; then
-                REMAINING=$(((COOLDOWN_SEC - DIFF) / 60))
+                REMAINING=$(((COOLDOWN_SEC - DIFF) / 60 + 1))
                 echo "❌ 쿨다운 중 - ${REMAINING}분 후 가능"
                 echo "should_run=false" >> $GITHUB_OUTPUT
                 exit 0
@@ -194,12 +201,12 @@ jobs:
             fi
           fi
 
-          echo "✅ 검사 실행 (슬롯: ai-review-$NEXT_SLOT)"
+          echo "✅ 리뷰 실행 (슬롯: ai-review-$NEXT_SLOT)"
           echo "should_run=true" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # AI 코드 검사 실행
+  # AI 코드 리뷰 실행
   ai-review:
     needs: check-conditions
     if: needs.check-conditions.outputs.should_run == 'true'
@@ -237,36 +244,53 @@ jobs:
       - name: Run AI Review
         id: ai-check
         run: |
-          echo "🤖 AI 코드 검사 실행 중..."
+          echo "🤖 AI 코드 리뷰 실행 중..."
 
-          # icanhazdadjoke API 호출
-          RESPONSE=$(curl -s -H "Accept: application/json" https://icanhazdadjoke.com/)
-          JOKE=$(echo "$RESPONSE" | jq -r '.joke')
-          JOKE_ID=$(echo "$RESPONSE" | jq -r '.id')
+          # diff 내용 읽기
+          DIFF_CONTENT=$(cat diff.txt | head -c 10000)
 
-          echo "🎭 받은 joke: $JOKE"
-          echo "🔑 joke ID: $JOKE_ID"
+          # Bedrock API 호출 (Nova Micro)
+          RESPONSE=$(curl -s -X POST "https://bedrock-runtime.us-east-1.amazonaws.com/model/${{ env.AI_MODEL }}/converse" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.BEDROCK_API_KEY }}" \
+            -d "$(jq -n --arg diff "$DIFF_CONTENT" '{
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 문제를 등급별로 분류하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n\n## 판정 기준\n- 🔴 Critical 있으면 → FAIL\n- 🟡 Warning 있으면 → FAIL\n- 🟢 Info만 있거나 문제 없음 → PASS\n\n## 응답 형식\n첫 줄: PASS 또는 FAIL\n둘째 줄: 빈 줄\n셋째 줄부터: 발견한 문제 (등급 이모지와 함께)\n\n```diff\n" + $diff + "\n```")}]
+                }
+              ]
+            }')")
 
-          # 글자수로 pass/fail 판정 (홀수: pass, 짝수: fail)
-          JOKE_LENGTH=${#JOKE}
-          echo "📏 글자수: $JOKE_LENGTH"
+          echo "API 응답: $RESPONSE"
 
-          if [ $((JOKE_LENGTH % 2)) -eq 1 ]; then
-            RESULT="pass"
-            SUMMARY="코드 품질이 양호합니다. (joke 글자수: ${JOKE_LENGTH}자 - 홀수)"
-          else
+          # 응답에서 텍스트 추출
+          AI_RESPONSE=$(echo "$RESPONSE" | jq -r '.output.message.content[0].text // empty')
+
+          if [ -z "$AI_RESPONSE" ]; then
+            echo "API 호출 실패"
+            echo "$RESPONSE" > review.txt
             RESULT="fail"
-            SUMMARY="개선이 필요한 부분이 있습니다. (joke 글자수: ${JOKE_LENGTH}자 - 짝수)"
+            SUMMARY="API 호출 실패"
+          else
+            echo "$AI_RESPONSE" > review.txt
+
+            # 첫 줄에서 PASS/FAIL 판정
+            FIRST_LINE=$(echo "$AI_RESPONSE" | head -1 | tr '[:lower:]' '[:upper:]')
+            if echo "$FIRST_LINE" | grep -q "PASS"; then
+              RESULT="pass"
+              SUMMARY="AI 리뷰 통과"
+            else
+              RESULT="fail"
+              SUMMARY="AI 리뷰에서 문제 발견"
+            fi
           fi
 
           echo "result=$RESULT" >> $GITHUB_OUTPUT
           echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
-
-          # joke를 파일로 저장 (multiline 대응)
-          echo "$JOKE" > joke.txt
-          echo "$JOKE_ID" > joke_id.txt
-
           echo "결과: $RESULT"
+        env:
+          BEDROCK_API_KEY: ${{ secrets.BEDROCK_API_KEY }}
 
       - name: Set final status
         run: |
@@ -285,38 +309,71 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Collapse old review comments
+        run: |
+          PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
+
+          # 이전 AI 리뷰 코멘트 ID 목록 가져오기
+          COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | test("^## [✅❌] AI 코드 리뷰")) | select(.body | contains("<details>") | not) | .id] | .[]')
+
+          for COMMENT_ID in $COMMENT_IDS; do
+            echo "접기 처리: 코멘트 $COMMENT_ID"
+
+            # 코멘트 본문 가져오기
+            BODY=$(gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" --jq '.body')
+
+            # 첫 줄(제목)과 둘째 줄(요약) 추출
+            HEADER=$(echo "$BODY" | head -2)
+            REST=$(echo "$BODY" | tail -n +3)
+
+            # details로 감싸기
+            printf -v NEW_BODY '%s\n\n<details>\n<summary>펼쳐서 보기</summary>\n\n%s\n</details>' "$HEADER" "$REST"
+
+            # 코멘트 업데이트
+            gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -X PATCH -f body="$NEW_BODY"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Post PR comment
         run: |
           SLOT="${{ needs.check-conditions.outputs.next_slot }}"
           RESULT="${{ steps.ai-check.outputs.result }}"
-          SUMMARY="${{ steps.ai-check.outputs.summary }}"
-          JOKE=$(cat joke.txt)
-          JOKE_ID=$(cat joke_id.txt)
+          REVIEW=$(cat review.txt)
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # 위험도별 개수 세기
+          CRITICAL=$(echo "$REVIEW" | grep -c "🔴" || true)
+          WARNING=$(echo "$REVIEW" | grep -c "🟡" || true)
+          INFO=$(echo "$REVIEW" | grep -c "🟢" || true)
 
           if [ "$RESULT" = "pass" ]; then
             EMOJI="✅"
-            STATUS="통과"
+            STATUS="PASS"
           else
             EMOJI="❌"
-            STATUS="실패"
+            STATUS="FAIL"
           fi
 
-          echo "## ${EMOJI} AI 코드 검사 #${SLOT} - ${STATUS}" > comment.txt
-          echo "" >> comment.txt
-          echo "**요약**: ${SUMMARY}" >> comment.txt
-          echo "" >> comment.txt
-          echo "### 🎭 오늘의 Joke" >> comment.txt
-          echo "> ${JOKE}" >> comment.txt
-          echo "" >> comment.txt
-          echo "\`ID: ${JOKE_ID}\`" >> comment.txt
-          echo "" >> comment.txt
-          echo "---" >> comment.txt
-          echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')" >> comment.txt
+          {
+            echo "## ${EMOJI} AI Review #${SLOT} - ${STATUS}"
+            echo "🔴 ${CRITICAL} | 🟡 ${WARNING} | 🟢 ${INFO}"
+            echo ""
+            echo "<details open>"
+            echo "<summary>상세 내용</summary>"
+            echo ""
+            echo "${REVIEW}"
+            echo ""
+            echo "---"
+            echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "</details>"
+          } > comment.txt
 
           gh pr comment ${{ needs.check-conditions.outputs.pr_number }} --body-file comment.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
   # 종합 판정 (merge-gate)
   update-gate:
@@ -344,7 +401,7 @@ jobs:
           FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | length')
           PENDING=$(echo "$STATUSES" | jq '[.[] | select(.state == "pending")] | length')
 
-          echo "📊 검사 현황: 총 $TOTAL / 필요 $REQUIRED (통과: $SUCCESS, 실패: $FAILURE, 진행중: $PENDING)"
+          echo "📊 리뷰 현황: 총 $TOTAL / 필요 $REQUIRED (통과: $SUCCESS, 실패: $FAILURE, 진행중: $PENDING)"
 
           # 아직 N개 안 채워짐
           if [ "$TOTAL" -lt "$REQUIRED" ]; then
@@ -352,7 +409,7 @@ jobs:
               -f state=pending \
               -f context="merge-gate" \
               -f description="AI 리뷰 ${TOTAL}/${REQUIRED} 완료"
-            echo "⏳ 추가 검사 필요"
+            echo "⏳ 추가 리뷰 필요"
             exit 0
           fi
 
@@ -362,7 +419,7 @@ jobs:
               -f state=pending \
               -f context="merge-gate" \
               -f description="AI 리뷰 진행 중 (${PENDING}개)"
-            echo "⏳ 검사 진행 중"
+            echo "⏳ 리뷰 진행 중"
             exit 0
           fi
 
