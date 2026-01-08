@@ -325,9 +325,9 @@ jobs:
           PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
           REQUIRED=${{ env.REQUIRED_COUNT }}
 
-          # 모든 ai-review status 조회
+          # 모든 ai-review status 조회 (context별 최신 상태만)
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
-            --jq '[.[] | select(.context | startswith("ai-review-"))]')
+            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(.[0])')
 
           TOTAL=$(echo "$STATUSES" | jq 'length')
           SUCCESS=$(echo "$STATUSES" | jq '[.[] | select(.state == "success")] | length')

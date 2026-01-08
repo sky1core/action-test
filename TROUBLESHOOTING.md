@@ -94,3 +94,8 @@ Error: refusing to allow an OAuth App to create or update workflow without workf
 이 설계의 목적:
 - 코드가 변경되면 이전 검사 결과는 무효
 - "푸시로 실패 리셋해서 재시도"를 해도 통과 기록도 같이 리셋되므로 게이밍 불가
+
+### workflow_dispatch가 PR 브랜치의 변경을 반영 안 함
+workflow_dispatch는 **main 브랜치의 workflow 파일**을 사용합니다. PR 브랜치에서 workflow를 수정해도 수동 실행 시 반영되지 않습니다.
+
+해결: workflow 변경은 main에 머지한 후 수동 실행
