@@ -59,7 +59,7 @@ jobs:
           gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             -f state=pending \
             -f context="merge-gate" \
-            -f description="not-ready 라벨 제거 후 리뷰 진행"
+            -f description="Remove not-ready label to start review"
 
           cat > comment.md << EOF
           ### AI 코드 리뷰
@@ -307,7 +307,7 @@ jobs:
           gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
             -f state=pending \
             -f context="ai-review-${{ needs.check-conditions.outputs.next_slot }}" \
-            -f description="AI 리뷰 진행 중..."
+            -f description="AI review in progress..."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -349,10 +349,10 @@ jobs:
             FIRST_LINE=$(echo "$AI_RESPONSE" | head -1 | tr '[:lower:]' '[:upper:]')
             if echo "$FIRST_LINE" | grep -q "PASS"; then
               RESULT="pass"
-              SUMMARY="AI 리뷰 통과"
+              SUMMARY="AI review passed"
             else
               RESULT="fail"
-              SUMMARY="AI 리뷰에서 문제 발견"
+              SUMMARY="Issues found in AI review"
             fi
           fi
 
@@ -366,10 +366,10 @@ jobs:
         run: |
           if [ "${{ steps.ai-check.outputs.result }}" = "pass" ]; then
             STATE="success"
-            DESC="AI 리뷰 통과"
+            DESC="AI review passed"
           else
             STATE="failure"
-            DESC="AI 리뷰 실패"
+            DESC="AI review failed"
           fi
 
           gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
@@ -478,7 +478,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=pending \
               -f context="merge-gate" \
-              -f description="AI 리뷰 ${TOTAL}/${REQUIRED} 완료"
+              -f description="AI review ${TOTAL}/${REQUIRED} completed"
             echo "⏳ 추가 리뷰 필요"
             exit 0
           fi
@@ -488,7 +488,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=pending \
               -f context="merge-gate" \
-              -f description="AI 리뷰 진행 중 (${PENDING}개)"
+              -f description="AI review in progress (${PENDING})"
             echo "⏳ 리뷰 진행 중"
             exit 0
           fi
@@ -499,14 +499,14 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
-              -f description="AI 리뷰 ${SUCCESS}/${REQUIRED} 통과"
+              -f description="AI review ${SUCCESS}/${REQUIRED} passed"
             echo "✅ 머지 가능"
           else
             # 1개라도 실패 - Approve 필요
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=failure \
               -f context="merge-gate" \
-              -f description="AI 리뷰 실패 ${FAILURE}개 - Approve 필요"
+              -f description="AI review failed (${FAILURE}) - Approval required"
             echo "❌ 사람 승인 필요"
           fi
         env:
@@ -549,7 +549,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
-              -f description="사람 승인으로 override"
+              -f description="Overridden by approval"
             echo "✅ Approve로 머지 가능"
           fi
         env:
