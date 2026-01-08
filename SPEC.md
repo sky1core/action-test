@@ -84,6 +84,12 @@
 - 그렇다. 1개라도 실패가 있으면 `merge-gate` = failure
 - 사람이 Approve해야 override됨
 
+### Q: pending 슬롯이 있으면 merge-gate는?
+- N개가 채워지기 전: `merge-gate` = pending (추가 검사 필요)
+- N개가 채워졌는데 pending 포함: `merge-gate` = pending (검사 진행 중)
+- N개가 채워지고 pending 없음: 전부 통과면 success, 실패 있으면 failure
+- **pending은 "아직 결과 없음"이므로 success로 판정 불가**
+
 ---
 
 ## 수동 실행 (workflow_dispatch)
@@ -122,8 +128,12 @@
 ## 라벨 동작
 
 ### Q: 라벨을 제거했다가 다시 추가하면?
-- 이후 이벤트(푸시, 라벨 제거)에서 검사 스킵
+- 라벨이 다시 존재하므로 이후 이벤트(푸시)에서 검사 스킵
 - 이미 진행 중인 검사는 계속 실행됨 (중단되지 않음)
+
+### Q: 다시 추가한 라벨을 또 제거하면?
+- 검사 실행됨. 라벨 제거 시마다 검사가 1회 실행됨.
+- 즉, 라벨 추가/제거를 반복해도 "제거할 때마다" 검사 트리거됨
 
 ### Q: 라벨은 누가 추가/제거하나?
 - PR 생성 시 시스템이 자동 추가
@@ -230,7 +240,8 @@
 ### Q: AI API 호출이 실패하면?
 - 해당 슬롯이 pending 상태로 남음
 - pending 상태의 슬롯은 재사용 불가 (채워진 것으로 취급)
-- 사실상 fail과 동일한 효과
+- merge-gate는 pending 유지 (success 불가)
+- Approve로 override 불가 (failure만 override 가능)
 - 재시도하려면 푸시해서 새 커밋으로
 
 ### Q: workflow_dispatch로 잘못된 PR 번호를 입력하면?
