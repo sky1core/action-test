@@ -12,9 +12,6 @@ class TestAdd:
     def test_zero(self):
         assert add(0, 0) == 0
 
-    def test_intentional_fail(self):
-        assert add(1, 1) == 3  # 의도적 실패
-
 
 class TestSubtract:
     def test_positive_numbers(self):
