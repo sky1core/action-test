@@ -5,7 +5,7 @@ on:
     types: [submitted, dismissed]
 
 env:
-  REQUIRED_COUNT: 3
+  REQUIRED_COUNT: 2
 
 jobs:
   # Approve 추가 시 override

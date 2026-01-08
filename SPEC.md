@@ -177,7 +177,7 @@
 
 | 항목 | 값 | 설명 |
 |------|-----|------|
-| `REQUIRED_COUNT` | 3 | 머지에 필요한 AI 리뷰 횟수 |
+| `REQUIRED_COUNT` | 2 | 머지에 필요한 AI 리뷰 횟수 |
 | `COOLDOWN_MINUTES` | 15 | 자동 검사 최소 간격 (분) |
 | `NOT_READY_LABEL` | `🚧 not-ready` | 검사 스킵용 라벨 |
 
@@ -226,6 +226,25 @@ Settings → Branches → Add branch protection rule
    - "Status checks that are required"에서 `merge-gate` 검색해서 추가
 
 4. **Save changes** 클릭
+
+---
+
+## AWS Bedrock API 키 설정
+
+### Q: API 키는 어디서 발급하나?
+Bedrock 콘솔 → API keys → Create long-term key
+
+https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/api-keys/long-term/create
+
+- 최대 30일 유효
+- IAM 설정 불필요
+- 테스트용으로 적합
+
+### Q: GitHub Secrets에 어떻게 추가하나?
+Repository → Settings → Secrets and variables → Actions → New repository secret
+
+추가할 시크릿:
+- `BEDROCK_API_KEY`: 발급받은 API 키
 
 ---
 

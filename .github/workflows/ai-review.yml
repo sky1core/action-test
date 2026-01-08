@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REQUIRED_COUNT: 3
+  REQUIRED_COUNT: 2
   COOLDOWN_MINUTES: 15
   NOT_READY_LABEL: "🚧 not-ready"
 
@@ -237,36 +237,53 @@ jobs:
       - name: Run AI Review
         id: ai-check
         run: |
-          echo "🤖 AI 코드 검사 실행 중..."
+          echo "🤖 AI 코드 리뷰 실행 중..."
 
-          # icanhazdadjoke API 호출
-          RESPONSE=$(curl -s -H "Accept: application/json" https://icanhazdadjoke.com/)
-          JOKE=$(echo "$RESPONSE" | jq -r '.joke')
-          JOKE_ID=$(echo "$RESPONSE" | jq -r '.id')
+          # diff 내용 읽기
+          DIFF_CONTENT=$(cat diff.txt | head -c 10000)
 
-          echo "🎭 받은 joke: $JOKE"
-          echo "🔑 joke ID: $JOKE_ID"
+          # Bedrock API 호출 (Nova Micro)
+          RESPONSE=$(curl -s -X POST "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1:0/converse" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.BEDROCK_API_KEY }}" \
+            -d "$(jq -n --arg diff "$DIFF_CONTENT" '{
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [{"text": ("당신은 시니어 개발자입니다. 다음 코드 변경사항을 리뷰해주세요.\n\n## 판정 기준\n- **FAIL**: 프로덕션에 나가면 안 되는 심각한 문제가 있음\n- **PASS**: 그 외 (사소한 개선점은 무시)\n\n전문가 판단으로 리뷰하세요. 체크리스트가 아닌 실제 문제를 찾으세요.\n\n## 응답 형식\n첫 줄: PASS 또는 FAIL\n둘째 줄부터: 발견한 문제 또는 간단한 코멘트\n\n```diff\n" + $diff + "\n```")}]
+                }
+              ]
+            }')")
 
-          # 글자수로 pass/fail 판정 (홀수: pass, 짝수: fail)
-          JOKE_LENGTH=${#JOKE}
-          echo "📏 글자수: $JOKE_LENGTH"
+          echo "API 응답: $RESPONSE"
 
-          if [ $((JOKE_LENGTH % 2)) -eq 1 ]; then
-            RESULT="pass"
-            SUMMARY="코드 품질이 양호합니다. (joke 글자수: ${JOKE_LENGTH}자 - 홀수)"
-          else
+          # 응답에서 텍스트 추출
+          AI_RESPONSE=$(echo "$RESPONSE" | jq -r '.output.message.content[0].text // empty')
+
+          if [ -z "$AI_RESPONSE" ]; then
+            echo "API 호출 실패"
+            echo "$RESPONSE" > review.txt
             RESULT="fail"
-            SUMMARY="개선이 필요한 부분이 있습니다. (joke 글자수: ${JOKE_LENGTH}자 - 짝수)"
+            SUMMARY="API 호출 실패"
+          else
+            echo "$AI_RESPONSE" > review.txt
+
+            # 첫 줄에서 PASS/FAIL 판정
+            FIRST_LINE=$(echo "$AI_RESPONSE" | head -1 | tr '[:lower:]' '[:upper:]')
+            if echo "$FIRST_LINE" | grep -q "PASS"; then
+              RESULT="pass"
+              SUMMARY="AI 리뷰 통과"
+            else
+              RESULT="fail"
+              SUMMARY="AI 리뷰에서 문제 발견"
+            fi
           fi
 
           echo "result=$RESULT" >> $GITHUB_OUTPUT
           echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
-
-          # joke를 파일로 저장 (multiline 대응)
-          echo "$JOKE" > joke.txt
-          echo "$JOKE_ID" > joke_id.txt
-
           echo "결과: $RESULT"
+        env:
+          BEDROCK_API_KEY: ${{ secrets.BEDROCK_API_KEY }}
 
       - name: Set final status
         run: |
@@ -290,8 +307,7 @@ jobs:
           SLOT="${{ needs.check-conditions.outputs.next_slot }}"
           RESULT="${{ steps.ai-check.outputs.result }}"
           SUMMARY="${{ steps.ai-check.outputs.summary }}"
-          JOKE=$(cat joke.txt)
-          JOKE_ID=$(cat joke_id.txt)
+          REVIEW=$(cat review.txt)
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           if [ "$RESULT" = "pass" ]; then
@@ -302,17 +318,17 @@ jobs:
             STATUS="실패"
           fi
 
-          echo "## ${EMOJI} AI 코드 검사 #${SLOT} - ${STATUS}" > comment.txt
-          echo "" >> comment.txt
-          echo "**요약**: ${SUMMARY}" >> comment.txt
-          echo "" >> comment.txt
-          echo "### 🎭 오늘의 Joke" >> comment.txt
-          echo "> ${JOKE}" >> comment.txt
-          echo "" >> comment.txt
-          echo "\`ID: ${JOKE_ID}\`" >> comment.txt
-          echo "" >> comment.txt
-          echo "---" >> comment.txt
-          echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')" >> comment.txt
+          {
+            echo "## ${EMOJI} AI 코드 리뷰 #${SLOT} - ${STATUS}"
+            echo ""
+            echo "**요약**: ${SUMMARY}"
+            echo ""
+            echo "### 리뷰 내용"
+            echo "${REVIEW}"
+            echo ""
+            echo "---"
+            echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S')"
+          } > comment.txt
 
           gh pr comment ${{ needs.check-conditions.outputs.pr_number }} --body-file comment.txt
         env:
