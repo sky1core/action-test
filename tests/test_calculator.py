@@ -50,9 +50,3 @@ class TestPower:
 
     def test_negative_exponent(self):
         assert power(2, -1) == 0.5
-
-
-class TestFailure:
-    def test_intentional_fail(self):
-        """의도적으로 실패하는 테스트"""
-        assert 1 == 2, "This test is designed to fail"
