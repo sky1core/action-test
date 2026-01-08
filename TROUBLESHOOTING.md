@@ -95,10 +95,16 @@ Error: refusing to allow an OAuth App to create or update workflow without workf
 - 코드가 변경되면 이전 리뷰 결과는 무효
 - "푸시로 실패 리셋해서 재시도"를 해도 통과 기록도 같이 리셋되므로 게이밍 불가
 
-### workflow_dispatch가 PR 브랜치의 변경을 반영 안 함
-workflow_dispatch는 **main 브랜치의 workflow 파일**을 사용합니다. PR 브랜치에서 workflow를 수정해도 수동 실행 시 반영되지 않습니다.
+### workflow_dispatch가 PR 브랜치의 워크플로우 변경을 반영 안 함
+workflow_dispatch는 **디폴트 브랜치의 workflow 파일**을 사용합니다.
 
-해결: workflow 변경은 main에 머지한 후 수동 실행
+- **워크플로우 YAML 파일**: 디폴트 브랜치 것 사용 (프롬프트, job 정의 등)
+- **리뷰 대상 코드**: PR의 diff (`gh pr diff`로 가져옴)
+
+즉, PR 브랜치에서 워크플로우를 수정해도 수동 실행 시 반영되지 않습니다.
+단, PR의 코드 변경사항은 정상적으로 리뷰됩니다.
+
+해결: 워크플로우 변경은 디폴트 브랜치에 머지한 후 수동 실행
 
 ### AI 리뷰가 pending 상태로 멈춤
 AI API 호출이 실패하거나 워크플로우가 중단되면 슬롯이 pending 상태로 남습니다.
