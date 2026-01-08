@@ -9,6 +9,7 @@ env:
 
 jobs:
   # Approve 추가 시 override
+  # ⚠️ 동기화 필요: 대상 브랜치(main/master)는 ai-review.yml의 branches와 함께 변경할 것.
   override-gate:
     if: |
       github.event.action == 'submitted' &&
@@ -56,6 +57,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Approve 취소 시 원래 상태로 복원
+  # ⚠️ 동기화 필요: 대상 브랜치(main/master)는 ai-review.yml의 branches와 함께 변경할 것.
   restore-gate:
     if: |
       github.event.action == 'dismissed' &&
@@ -107,6 +109,7 @@ jobs:
           fi
 
           # AI 검사 결과 다시 계산 (context별 최신 상태만)
+          # ⚠️ 동기화 필요: 이 집계 로직은 ai-review.yml에도 있음. 수정 시 함께 변경할 것.
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
             --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(sort_by([.updated_at, (.state != "pending")]) | last)')
 
