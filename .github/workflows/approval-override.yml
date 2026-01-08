@@ -43,7 +43,7 @@ jobs:
               -f context="merge-gate" \
               -f description="Overridden by approval (@${{ github.event.review.user.login }})"
 
-            printf '## ✅ Merge Gate Override\n\n**@%s**의 승인으로 AI 리뷰 실패가 override 되었습니다.\n\n머지가 가능합니다.' "${{ github.event.review.user.login }}" > comment.md
+            printf '## ✅ Merge Gate Override\n\n**@%s**의 승인으로 merge-gate가 override 되었습니다.\n\n머지가 가능합니다.' "${{ github.event.review.user.login }}" > comment.md
             gh pr comment $PR_NUMBER --body-file comment.md
             echo "✅ Override 완료"
           else
