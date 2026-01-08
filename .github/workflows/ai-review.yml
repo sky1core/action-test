@@ -332,6 +332,7 @@ jobs:
           gh pr comment ${{ needs.check-conditions.outputs.pr_number }} --body-file comment.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
   # 종합 판정 (merge-gate)
   update-gate:
