@@ -5,9 +5,11 @@ GitHub Actions로 PR에 AI 코드 검사를 자동화합니다.
 ## 이 시스템이 하는 일
 
 1. PR 생성 시 `🚧 not-ready` 라벨을 자동 추가
-2. 라벨이 있으면 검사를 스킵 (비용 절감)
-3. 라벨을 제거하면 테스트 → AI 검사 실행
-4. N개의 AI 검사가 통과하면 머지 가능 (또는 사람이 Approve)
+2. 라벨이 있으면 모든 검사를 스킵 (비용 절감)
+3. 라벨을 제거하면 테스트 + AI 검사 1회 자동 실행
+4. PR이 열린 상태에서 푸시하면 테스트 + AI 검사 1회 자동 실행 (라벨 없을 때만)
+5. **푸시하면 이전 통과 기록은 전부 무효화** (새 커밋 기준으로 다시 시작)
+6. 같은 커밋에서 N개의 AI 검사가 통과하면 머지 가능 (또는 사람이 Approve)
 
 ---
 
@@ -52,7 +54,8 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
 
 | Name | Value | 설명 |
 |------|-------|------|
-| `AI_REVIEW_REQUIRED_COUNT` | 원하는 숫자 | 머지에 필요한 AI 검사 횟수 (미설정 시 기본값 3) |
+| `AI_REVIEW_REQUIRED_COUNT` | 원하는 숫자 | 머지에 필요한 AI 검사 횟수 (기본값 3) |
+| `AI_REVIEW_COOLDOWN_MINUTES` | 원하는 숫자 | 자동 검사 최소 간격 (기본값 5분) |
 
 ### 3단계: AI 검사 로직 연결
 
@@ -82,15 +85,18 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
    └─ 이 상태에서는 push해도 검사 안 함
 
 2. 라벨 제거 (검사 시작)
-   └─ 테스트 실행
-   └─ 테스트 통과 시 AI 검사 1회 실행
+   └─ 테스트 + AI 검사 1회 자동 실행
 
-3. 추가 검사 필요 시
-   └─ push하면 자동 실행 (쿨다운 5분)
-   └─ 또는 Actions에서 수동 실행
+3. PR에 푸시 (라벨 없는 상태에서)
+   └─ 테스트 + AI 검사 1회 자동 실행
+   └─ ⚠️ 이전 커밋의 통과 기록은 무효화됨 (새 커밋 기준으로 다시 시작)
+   └─ PR이 없는 브랜치에 푸시하면 검사 안 함
 
-4. 머지
-   └─ N개 검사 전부 통과: merge-gate ✅
+4. 추가 검사 필요 시
+   └─ Actions에서 수동 실행 (같은 커밋에서 N개 채우기)
+
+5. 머지
+   └─ 같은 커밋에서 N개 검사 전부 통과: merge-gate ✅
    └─ 실패가 있으면: 사람 Approve로 override 가능
 ```
 
@@ -127,15 +133,28 @@ PR의 Checks 탭에서 다음 status들을 볼 수 있습니다:
 
 ---
 
+## 세부 동작 규칙
+
+자세한 요구조건 정의는 [SPEC.md](./SPEC.md)를 참고하세요.
+
+주요 규칙:
+- 테스트 통과해야 AI 검사 실행
+- 푸시하면 이전 검사 기록 전부 무효화 (새 커밋 기준)
+- N개 슬롯이 다 차면 추가 검사 불가, 재시도는 푸시로
+- 쿨다운은 자동 실행에만 적용, 수동 실행은 무시
+- 1개라도 실패 있으면 사람 Approve 필요
+
+---
+
 ## 설정 커스터마이징
 
-`ai-review.yml` 상단의 `env` 섹션에서 수정:
+`ai-review.yml` 상단의 `env` 섹션 또는 GitHub Variables에서 설정:
 
 ```yaml
 env:
-  REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}  # 필요 검사 횟수
-  COOLDOWN_MINUTES: 5                                         # 자동 검사 최소 간격 (분)
-  NOT_READY_LABEL: "🚧 not-ready"                            # 스킵용 라벨 이름
+  REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}      # 필요 검사 횟수
+  COOLDOWN_MINUTES: ${{ vars.AI_REVIEW_COOLDOWN_MINUTES || 5 }}  # 자동 검사 최소 간격 (분)
+  NOT_READY_LABEL: "🚧 not-ready"                                # 스킵용 라벨 이름
 ```
 
 ---

@@ -1,18 +1,12 @@
 name: AI Code Review
 
 on:
-  # PR 생성 시 라벨 추가, 라벨 제거 시 검사 실행
+  # PR 생성 시 라벨 추가, 라벨 제거/푸시 시 검사 실행
   pull_request:
-    types: [opened, unlabeled]
-    branches: [main]
+    types: [opened, unlabeled, synchronize]
+    branches: [main, master]
 
-  # 라벨 없는 상태에서 push 시 자동 실행
-  push:
-    branches-ignore:
-      - main
-      - master
-
-  # 수동 실행
+  # 수동 실행 (추가 검사용)
   workflow_dispatch:
     inputs:
       pr_number:
@@ -27,7 +21,7 @@ concurrency:
 
 env:
   REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}
-  COOLDOWN_MINUTES: 5
+  COOLDOWN_MINUTES: ${{ vars.AI_REVIEW_COOLDOWN_MINUTES || 5 }}
   NOT_READY_LABEL: "🚧 not-ready"
 
 jobs:
@@ -54,11 +48,12 @@ jobs:
 
           `${{ env.NOT_READY_LABEL }}` 라벨이 자동으로 추가되었습니다.
 
-          **진행 방법:**
-          1. 검사가 필요 없는 동안은 라벨 유지 (테스트/AI 검사 스킵)
-          2. 검사가 필요하면 라벨 제거 → 테스트 + AI 검사 1회 실행
-          3. 추가 검사는 push 또는 [Actions에서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)
-          4. 머지 조건: **${{ env.REQUIRED_COUNT }}개** AI 검사 통과 또는 사람 Approve
+          **사용 방법:**
+          1. 이 라벨이 붙어있는 동안은 검사가 실행되지 않습니다. 개발 중에는 그대로 두세요.
+          2. 검사를 받으려면 라벨을 제거하세요. 자동으로 검사가 **1회** 실행됩니다.
+          3. 이후 푸시할 때마다 검사가 **1회** 자동 실행됩니다. 단, **푸시하면 이전 통과 기록은 무효화**됩니다.
+          4. 머지하려면 **같은 커밋**에서 총 **${{ env.REQUIRED_COUNT }}개**의 검사를 통과해야 합니다. 추가 검사는 [여기서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)하세요.
+          5. 검사가 실패해도 사람이 Approve하면 머지할 수 있습니다.
           EOF
           gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
         env:
@@ -80,8 +75,6 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PR_NUMBER="${{ github.event.inputs.pr_number }}"
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            PR_NUMBER=$(gh pr list --head "${{ github.ref_name }}" --json number -q '.[0].number')
           else
             PR_NUMBER="${{ github.event.pull_request.number }}"
           fi

@@ -55,12 +55,18 @@ steps:
 
 ### pull_request 이벤트 타입
 
-PR 생성과 라벨 제거를 모두 감지하려면 타입을 명시해야 합니다.
+PR 생성, 라벨 제거, 푸시를 모두 감지하려면 타입을 명시해야 합니다.
 ```yaml
 on:
   pull_request:
-    types: [opened, unlabeled]
+    types: [opened, unlabeled, synchronize]
 ```
+
+- `opened`: PR 생성 시
+- `unlabeled`: 라벨 제거 시
+- `synchronize`: PR에 푸시 시 (PR이 열려있을 때만 트리거됨)
+
+> 참고: `push` 트리거와 달리 `synchronize`는 PR이 열린 상태에서만 트리거됩니다.
 
 ### OAuth App으로 워크플로우 수정 불가
 
@@ -81,3 +87,10 @@ Error: refusing to allow an OAuth App to create or update workflow without workf
 - `🚧 not-ready` 라벨이 붙어있는지 확인
 - 쿨다운 시간 내인지 확인 (기본 5분)
 - 이미 N개 검사가 완료되었는지 확인
+
+### 푸시했더니 이전 통과 기록이 사라짐
+이것은 정상 동작입니다. 푸시하면 새 커밋이 되고, status check는 커밋 단위로 관리됩니다. 새 커밋에서 다시 N개의 검사를 통과해야 합니다.
+
+이 설계의 목적:
+- 코드가 변경되면 이전 검사 결과는 무효
+- "푸시로 실패 리셋해서 재시도"를 해도 통과 기록도 같이 리셋되므로 게이밍 불가
