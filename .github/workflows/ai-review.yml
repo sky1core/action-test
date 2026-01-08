@@ -150,6 +150,29 @@ jobs:
 
           gh pr comment "$PR_NUMBER" --body-file comment.md
 
+      - name: Collapse old unit test failure comments
+        if: steps.unit-test.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+
+          COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | startswith("## ❌ 단위테스트 실패")) | select(.body | contains("<details>") | not) | .id] | .[]')
+
+          for COMMENT_ID in $COMMENT_IDS; do
+            BODY=$(gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" --jq '.body')
+            FIRST_LINE=$(echo "$BODY" | head -1)
+            REST=$(echo "$BODY" | tail -n +2)
+
+            printf '%s\n\n<details>\n<summary>펼쳐서 보기</summary>\n%s\n</details>' "$FIRST_LINE" "$REST" > new_body.md
+
+            gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+              -X PATCH \
+              -F body=@new_body.md
+            echo "Collapsed comment $COMMENT_ID"
+          done
+
       - name: Fail if unit tests failed
         if: steps.unit-test.outputs.exit_code != '0'
         run: exit 1
