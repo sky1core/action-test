@@ -145,12 +145,30 @@ jobs:
         id: cooldown
         if: github.event_name != 'workflow_dispatch'
         run: |
-          # 이전 워크플로우 실행 시간 확인 (현재 run 제외 = index 1)
-          LAST_RUN=$(gh run list --workflow=pr-review.yml --branch=${{ github.head_ref }} --json createdAt \
-            --jq '.[1].createdAt // empty')
+          # 이전 워크플로우 실행 중 unit-test가 실제로 실행된 것만 찾기
+          # (opened 이벤트는 라벨만 추가하고 테스트 안 함 → 쿨다운 계산에서 제외)
+          RUNS=$(gh run list --workflow=pr-review.yml --branch=${{ github.head_ref }} --json databaseId,createdAt --limit=10)
 
-          if [ -n "$LAST_RUN" ]; then
-            LAST_SEC=$(date -d "$LAST_RUN" +%s)
+          LAST_TEST_RUN=""
+          CURRENT_RUN_ID="${{ github.run_id }}"
+
+          for RUN_ID in $(echo "$RUNS" | jq -r '.[].databaseId'); do
+            # 현재 실행은 스킵
+            if [ "$RUN_ID" = "$CURRENT_RUN_ID" ]; then
+              continue
+            fi
+
+            # unit-test job이 실행되었는지 확인 (skipped가 아닌 경우)
+            UNIT_TEST_CONCLUSION=$(gh run view $RUN_ID --json jobs --jq '.jobs[] | select(.name == "unit-test") | .conclusion')
+
+            if [ -n "$UNIT_TEST_CONCLUSION" ] && [ "$UNIT_TEST_CONCLUSION" != "skipped" ]; then
+              LAST_TEST_RUN=$(echo "$RUNS" | jq -r --arg id "$RUN_ID" '.[] | select(.databaseId == ($id | tonumber)) | .createdAt')
+              break
+            fi
+          done
+
+          if [ -n "$LAST_TEST_RUN" ]; then
+            LAST_SEC=$(date -d "$LAST_TEST_RUN" +%s)
             NOW_SEC=$(date +%s)
             DIFF=$((NOW_SEC - LAST_SEC))
             COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
