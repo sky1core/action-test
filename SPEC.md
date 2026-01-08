@@ -160,7 +160,8 @@
 
 ### Q: Approve 있는 상태에서 푸시하면?
 - 새 SHA에서 검사가 다시 시작됨
-- 기존 Approve가 유지되므로 merge-gate는 바로 success로 override됨
+- Branch protection 설정 시 기존 Approve가 자동 dismiss됨
+- 다시 검사를 통과하거나 새로 Approve 받아야 함
 
 ### Q: 검사를 안 받고 Approve만으로 머지할 수 있나?
 - 가능. Approve가 있으면 검사 결과와 무관하게 머지 가능
@@ -217,6 +218,7 @@
 - Branch name pattern: `main` (또는 본인 기본 브랜치)
 - "Require status checks to pass before merging" 체크
 - "Status checks that are required"에서 `merge-gate` 추가
+- "Dismiss stale pull request approvals when new commits are pushed" 체크 → 푸시 시 기존 Approve 무효화 (필수)
 
 ---
 
