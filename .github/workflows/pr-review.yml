@@ -243,13 +243,6 @@ jobs:
             echo "Collapsed comment $COMMENT_ID"
           done
 
-      - name: Comment on unit test success (manual only)
-        if: github.event.inputs.run_type == 'unit-test' && steps.unit-test.outputs.exit_code == '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr comment "${{ needs.check-label.outputs.pr_number }}" --body "## ✅ ${{ env.TEST_PREFIX }} - PASS"
-
       - name: Fail if unit tests failed
         if: steps.cooldown.outputs.skipped != 'true' && steps.unit-test.outputs.exit_code != '0'
         run: exit 1
