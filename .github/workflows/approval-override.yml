@@ -10,7 +10,10 @@ env:
 jobs:
   # Approve 추가 시 override
   override-gate:
-    if: github.event.action == 'submitted' && github.event.review.state == 'approved'
+    if: |
+      github.event.action == 'submitted' &&
+      github.event.review.state == 'approved' &&
+      (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master')
     runs-on: ubuntu-latest
     permissions:
       statuses: write
@@ -54,7 +57,9 @@ jobs:
 
   # Approve 취소 시 원래 상태로 복원
   restore-gate:
-    if: github.event.action == 'dismissed'
+    if: |
+      github.event.action == 'dismissed' &&
+      (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master')
     runs-on: ubuntu-latest
     permissions:
       statuses: write
