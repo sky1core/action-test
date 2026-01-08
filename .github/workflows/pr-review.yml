@@ -136,21 +136,53 @@ jobs:
       (github.event_name != 'workflow_dispatch' || github.event.inputs.run_type == 'unit-test')
     needs: check-label
     runs-on: ubuntu-latest
+    outputs:
+      skipped: ${{ steps.cooldown.outputs.skipped }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check cooldown
+        id: cooldown
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+
+          # PR 코멘트에서 마지막 단위테스트 시간 확인
+          LAST_TEST=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.TEST_PREFIX }}")) | .created_at] | sort | last // empty')
+
+          if [ -n "$LAST_TEST" ]; then
+            LAST_SEC=$(date -d "$LAST_TEST" +%s)
+            NOW_SEC=$(date +%s)
+            DIFF=$((NOW_SEC - LAST_SEC))
+            COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
+
+            if [ $DIFF -lt $COOLDOWN_SEC ]; then
+              REMAINING=$(((COOLDOWN_SEC - DIFF) / 60 + 1))
+              echo "❌ 쿨다운 중 - ${REMAINING}분 후 가능"
+              echo "skipped=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          echo "skipped=false" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install uv
+        if: steps.cooldown.outputs.skipped != 'true'
         uses: astral-sh/setup-uv@v4
 
       - name: Run unit tests
         id: unit-test
+        if: steps.cooldown.outputs.skipped != 'true'
         run: |
           uv run pytest tests/ -v 2>&1 | tee test_output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       - name: Comment on unit test failure
-        if: steps.unit-test.outputs.exit_code != '0'
+        if: steps.cooldown.outputs.skipped != 'true' && steps.unit-test.outputs.exit_code != '0'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -163,7 +195,7 @@ jobs:
           gh pr comment "$PR_NUMBER" --body-file comment.md
 
       - name: Collapse old unit test failure comments
-        if: steps.unit-test.outputs.exit_code == '0'
+        if: steps.cooldown.outputs.skipped != 'true' && steps.unit-test.outputs.exit_code == '0'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -193,7 +225,7 @@ jobs:
           gh pr comment "${{ needs.check-label.outputs.pr_number }}" --body "## ✅ ${{ env.TEST_PREFIX }} - PASS"
 
       - name: Fail if unit tests failed
-        if: steps.unit-test.outputs.exit_code != '0'
+        if: steps.cooldown.outputs.skipped != 'true' && steps.unit-test.outputs.exit_code != '0'
         run: exit 1
 
   # PR 정보 확인 및 리뷰 필요 여부 판단
@@ -204,7 +236,7 @@ jobs:
       needs.check-label.outputs.should_continue == 'true' &&
       (
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'ai-review') ||
-        (github.event_name != 'workflow_dispatch' && needs.unit-test.result == 'success')
+        (github.event_name != 'workflow_dispatch' && needs.unit-test.result == 'success' && needs.unit-test.outputs.skipped != 'true')
       )
     needs: [check-label, unit-test]
     runs-on: ubuntu-latest
