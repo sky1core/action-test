@@ -101,12 +101,12 @@ jobs:
             exit 0
           fi
 
-          # AI 검사 결과 다시 계산
+          # AI 검사 결과 다시 계산 (context별 최신 상태만)
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
-            --jq '[.[] | select(.context | startswith("ai-review-"))]')
+            --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(.[0])')
 
-          TOTAL=$(echo "$STATUSES" | jq '[.[].context] | unique | length')
-          FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | [.[].context] | unique | length')
+          TOTAL=$(echo "$STATUSES" | jq 'length')
+          FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | length')
 
           echo "검사 현황: 총 $TOTAL, 실패 $FAILURE"
 
