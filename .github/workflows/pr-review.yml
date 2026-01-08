@@ -385,7 +385,7 @@ jobs:
 
           # 이전 AI 리뷰 코멘트 ID 목록 가져오기
           COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.REVIEW_PREFIX }}")) | select(.body | contains("<details>") | not) | .id] | .[]')
+            --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.REVIEW_PREFIX }}")) | select(.body | contains("<details open>")) | .id] | .[]')
 
           for COMMENT_ID in $COMMENT_IDS; do
             echo "접기 처리: 코멘트 $COMMENT_ID"
@@ -393,12 +393,8 @@ jobs:
             # 코멘트 본문 가져오기
             BODY=$(gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" --jq '.body')
 
-            # 첫 줄(제목)과 둘째 줄(요약) 추출
-            HEADER=$(echo "$BODY" | head -2)
-            REST=$(echo "$BODY" | tail -n +3)
-
-            # details로 감싸기
-            printf -v NEW_BODY '%s\n\n<details>\n<summary>펼쳐서 보기</summary>\n\n%s\n</details>' "$HEADER" "$REST"
+            # <details open> → <details> 로 변경 (접힌 상태로)
+            NEW_BODY=$(echo "$BODY" | sed 's/<details open>/<details>/')
 
             # 코멘트 업데이트
             gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -X PATCH -f body="$NEW_BODY"
