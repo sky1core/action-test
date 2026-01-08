@@ -57,7 +57,7 @@ jobs:
 
           리뷰 받을 준비가 되면 \`${{ env.NOT_READY_LABEL }}\` 라벨을 제거하세요.
 
-          - 라벨 제거 → 테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
+          - 라벨 제거 → 단위테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
           - 추가 리뷰는 [Actions에서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)
           - 머지 조건: 리뷰 ${{ env.REQUIRED_COUNT }}개 통과 또는 Approve
           - 푸시하면 이전 기록 초기화 (다시 ${{ env.REQUIRED_COUNT }}개 통과 필요)
@@ -68,7 +68,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
-  # 라벨 체크 (테스트 전에 먼저 확인)
+  # 라벨 체크 (단위테스트 전에 먼저 확인)
   check-label:
     if: github.event.action != 'opened'
     runs-on: ubuntu-latest
@@ -119,8 +119,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 테스트 실행 (라벨 없을 때만)
-  test:
+  # 단위테스트 실행 (라벨 없을 때만)
+  unit-test:
     if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
     needs: check-label
     runs-on: ubuntu-latest
@@ -130,13 +130,34 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Run tests
-        run: uv run pytest tests/ -v
+      - name: Run unit tests
+        id: unit-test
+        run: |
+          uv run pytest tests/ -v 2>&1 | tee test_output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Comment on unit test failure
+        if: steps.unit-test.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+
+          printf '## ❌ 단위테스트 실패\n\n단위테스트 실패로 AI 리뷰가 실행되지 않습니다.\n\n```\n' > comment.md
+          tail -50 test_output.txt >> comment.md
+          printf '\n```\n' >> comment.md
+
+          gh pr comment "$PR_NUMBER" --body-file comment.md
+
+      - name: Fail if unit tests failed
+        if: steps.unit-test.outputs.exit_code != '0'
+        run: exit 1
 
   # PR 정보 확인 및 리뷰 필요 여부 판단
   check-conditions:
     if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
-    needs: [check-label, test]
+    needs: [check-label, unit-test]
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
