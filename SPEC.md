@@ -5,7 +5,7 @@
 | 용어 | 정의 |
 |------|------|
 | 커밋 | Git commit SHA. 푸시할 때마다 새로운 SHA가 생성됨 |
-| 슬롯 | AI 검사 결과를 저장하는 칸 (`ai-review-1`, `ai-review-2`, ...) |
+| 슬롯 | AI 리뷰 결과를 저장하는 칸 (`ai-review-1`, `ai-review-2`, ...) |
 | N | 머지에 필요한 검사 횟수 (기본값 3, 변수로 설정 가능) |
 | 라벨 | `🚧 not-ready` 라벨. 검사 스킵용 |
 
@@ -19,14 +19,14 @@
 - `merge-gate` = pending 상태
 
 ### Q: 라벨이 있으면 어떻게 되나?
-- 모든 검사(테스트, AI 검사)가 스킵됨
+- 모든 검사(테스트, AI 리뷰)가 스킵됨
 - 푸시해도 검사 안 함
 
 ### Q: 라벨을 제거하면 어떻게 되나?
-- 테스트 실행 → 통과하면 AI 검사 1회 자동 실행
+- 테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
 
 ### Q: PR에 푸시하면 어떻게 되나?
-- 라벨 없으면: 테스트 실행 → 통과하면 AI 검사 1회 자동 실행
+- 라벨 없으면: 테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
 - 라벨 있으면: 아무것도 안 함
 - **중요: 푸시하면 새 커밋(SHA)이 되므로 이전 검사 기록은 전부 무효화됨**
 
@@ -37,9 +37,9 @@
 
 ## 테스트
 
-### Q: 테스트가 실패하면 AI 검사는 어떻게 되나?
-- AI 검사 실행 안 함
-- 이유: AI 검사는 비용이 드는 작업. 테스트도 못 통과하는 코드에 AI 검사 돌릴 이유 없음.
+### Q: 테스트가 실패하면 AI 리뷰는 어떻게 되나?
+- AI 리뷰 실행 안 함
+- 이유: AI 리뷰는 비용이 드는 작업. 테스트도 못 통과하는 코드에 AI 리뷰 돌릴 이유 없음.
 
 ### Q: 테스트는 언제 실행되나?
 - 라벨 제거 시
@@ -51,7 +51,7 @@
 ## 슬롯 시스템
 
 ### Q: 슬롯이 뭔가?
-- AI 검사 결과를 저장하는 칸
+- AI 리뷰 결과를 저장하는 칸
 - `ai-review-1`, `ai-review-2`, ... `ai-review-N` 형태
 - 각 슬롯은 pass 또는 fail 상태를 가짐
 
@@ -72,7 +72,7 @@
 ## 머지 조건
 
 ### Q: 머지하려면 어떤 조건이 필요한가?
-- **방법 1**: 같은 커밋에서 N개 AI 검사가 전부 통과 → `merge-gate` = success
+- **방법 1**: 같은 커밋에서 N개 AI 리뷰가 전부 통과 → `merge-gate` = success
 - **방법 2**: 사람이 Approve → `merge-gate` = success (override)
 
 ### Q: N개 중 일부만 통과하면?
@@ -111,7 +111,7 @@
 
 ### Q: 쿨다운이 뭔가?
 - 자동 실행 전 마지막 검사 이후 최소 대기 간격
-- 기본값 5분, 변수로 설정 가능 (`AI_REVIEW_COOLDOWN_MINUTES`)
+- 기본값 15분
 - 마지막 검사가 수동이든 자동이든 상관없이 적용됨
 
 ### Q: 쿨다운의 목적은?
@@ -145,24 +145,26 @@
 
 ## Approve Override
 
+### Q: Approve 하는 방법은?
+1. PR 페이지에서 "Files changed" 탭 클릭
+2. 오른쪽 위 "Review changes" 버튼 클릭
+3. "Approve" 선택 후 "Submit review"
+
 ### Q: Approve의 역할은?
-- **검사 면제가 아님**. N개 검사는 무조건 실행됨.
-- Approve의 역할: N개 검사 중 실패가 있을 때 그걸 무시하고 머지 가능하게 해줌
+- Approve = 머지 허용
+- Approve가 있으면 merge-gate가 즉시 success가 됨
 
 ### Q: Approve하면 어떻게 되나?
-- `merge-gate`가 failure 상태면 success로 override됨
-- `merge-gate`가 pending이면 override 안 됨 (N개 채워야 함)
+- `merge-gate`가 즉시 success로 override됨 (pending이든 failure든)
 - `merge-gate`가 이미 success면 변화 없음
 
 ### Q: Approve 있는 상태에서 푸시하면?
 - 새 SHA에서 검사가 다시 시작됨
-- N개 검사가 채워질 때까지 merge-gate = pending
-- pending 상태에서는 Approve가 있어도 override 안 됨
-- N개 채운 후: 전부 통과면 success, 실패 있으면 failure
-- failure일 때 기존 Approve가 있으면 success로 override됨
+- Branch protection 설정 시 기존 Approve가 자동 dismiss됨
+- 다시 검사를 통과하거나 새로 Approve 받아야 함
 
 ### Q: 검사를 안 받고 Approve만으로 머지할 수 있나?
-- 불가능. 최소 N개 검사가 완료되어야 함 (전부 실패해도 N개는 채워야 함)
+- 가능. Approve가 있으면 검사 결과와 무관하게 머지 가능
 
 ### Q: Approve가 취소(dismiss)되면?
 - 다른 Approve가 남아있으면: 변화 없음
@@ -171,22 +173,26 @@
 
 ---
 
-## 설정 변수
+## 상수
 
-| 변수명 | 기본값 | 설명 |
-|--------|--------|------|
-| `AI_REVIEW_REQUIRED_COUNT` | 3 | 머지에 필요한 AI 검사 횟수 |
-| `AI_REVIEW_COOLDOWN_MINUTES` | 5 | 자동 검사 최소 간격 (분) |
+| 항목 | 값 | 설명 |
+|------|-----|------|
+| `REQUIRED_COUNT` | 3 | 머지에 필요한 AI 리뷰 횟수 |
+| `COOLDOWN_MINUTES` | 15 | 자동 검사 최소 간격 (분) |
+| `NOT_READY_LABEL` | `🚧 not-ready` | 검사 스킵용 라벨 |
 
-설정 위치: GitHub → Settings → Secrets and variables → Actions → Variables
+변경하려면 yml 파일을 수정하고 PR을 올려야 합니다. (리뷰 필요)
 
 ---
 
 ## 커스터마이징 (yml 직접 수정)
 
+### Q: 검사 횟수나 쿨다운을 바꾸고 싶으면?
+- `ai-review.yml`의 `REQUIRED_COUNT`, `COOLDOWN_MINUTES` 값 수정
+- `approval-override.yml`의 `REQUIRED_COUNT`도 함께 수정
+
 ### Q: 라벨 이름을 바꾸고 싶으면?
 - `ai-review.yml`의 `NOT_READY_LABEL` 값 수정
-- 변수로 설정 불가, yml 직접 수정 필요
 
 ### Q: 테스트 명령어를 바꾸고 싶으면?
 - `ai-review.yml`의 `Run tests` 단계 수정
@@ -204,14 +210,22 @@
 
 ### Q: Branch Protection을 설정 안 하면?
 - merge-gate 결과와 무관하게 머지 가능
+- 푸시해도 Approve가 유지됨
 - 검사가 의미 없어짐
 - **반드시 설정해야 함**
 
 ### Q: 어떻게 설정하나?
-- Settings → Branches → Add branch protection rule
-- Branch name pattern: `main` (또는 본인 기본 브랜치)
-- "Require status checks to pass before merging" 체크
-- "Status checks that are required"에서 `merge-gate` 추가
+Settings → Branches → Add branch protection rule
+
+1. **Branch name pattern**: `main` (또는 본인 기본 브랜치)
+
+2. **Require a pull request before merging** 체크
+   - "Dismiss stale pull request approvals when new commits are pushed" 체크
+
+3. **Require status checks to pass before merging** 체크
+   - "Status checks that are required"에서 `merge-gate` 검색해서 추가
+
+4. **Save changes** 클릭
 
 ---
 

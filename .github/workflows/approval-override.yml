@@ -5,7 +5,7 @@ on:
     types: [submitted, dismissed]
 
 env:
-  REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}
+  REQUIRED_COUNT: 3
 
 jobs:
   # Approve 추가 시 override
@@ -36,8 +36,8 @@ jobs:
 
           echo "현재 merge-gate 상태: $GATE_STATE"
 
-          # 실패 상태면 override
-          if [ "$GATE_STATE" = "failure" ]; then
+          # success가 아니면 override (pending, failure 모두)
+          if [ "$GATE_STATE" != "success" ]; then
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
@@ -46,7 +46,7 @@ jobs:
             cat > comment.md << 'EOF'
 ## ✅ Merge Gate Override
 
-**@${{ github.event.review.user.login }}**의 승인으로 AI 검사 실패가 override 되었습니다.
+**@${{ github.event.review.user.login }}**의 승인으로 AI 리뷰 실패가 override 되었습니다.
 
 머지가 가능합니다.
 EOF
@@ -113,7 +113,7 @@ EOF
             exit 0
           fi
 
-          # AI 검사 결과 다시 계산 (context별 최신 상태만)
+          # AI 리뷰 결과 다시 계산 (context별 최신 상태만)
           # ⚠️ 동기화 필요: 이 집계 로직은 ai-review.yml에도 있음. 수정 시 함께 변경할 것.
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
             --jq '[.[] | select(.context | startswith("ai-review-"))] | group_by(.context) | map(sort_by([.updated_at, (.state != "pending")]) | last)')
@@ -128,7 +128,7 @@ EOF
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=failure \
               -f context="merge-gate" \
-              -f description="AI 검사 실패 ${FAILURE}개 - Approve 필요"
+              -f description="AI 리뷰 실패 ${FAILURE}개 - Approve 필요"
 
             cat > comment.md << 'EOF'
 ## ⚠️ Merge Gate 복원
