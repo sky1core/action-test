@@ -128,85 +128,87 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # 쿨다운 체크 (marker status만 확인하는 문지기)
+  cooldown-check:
+    if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
+    needs: check-label
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.check.outputs.should_skip }}
+    steps:
+      - name: Check cooldown marker
+        id: check
+        run: |
+          # 수동 실행은 쿨다운 무시
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 이 브랜치의 이전 워크플로우 run들 확인
+          RUNS=$(gh run list --workflow=pr-review.yml --branch=${{ github.head_ref }} --json databaseId,headSha,createdAt --limit=10)
+
+          CURRENT_RUN_ID="${{ github.run_id }}"
+
+          for row in $(echo "$RUNS" | jq -c '.[]'); do
+            RUN_ID=$(echo "$row" | jq -r '.databaseId')
+            RUN_SHA=$(echo "$row" | jq -r '.headSha')
+
+            # 현재 run 스킵
+            if [ "$RUN_ID" = "$CURRENT_RUN_ID" ]; then
+              continue
+            fi
+
+            # 해당 커밋에 cooldown-marker가 있는지 확인
+            MARKER=$(gh api /repos/${{ github.repository }}/commits/$RUN_SHA/statuses \
+              --jq '[.[] | select(.context == "cooldown-marker")] | .[0]')
+
+            if [ -n "$MARKER" ] && [ "$MARKER" != "null" ]; then
+              # marker 있음 - 시간 확인
+              MARKER_TIME=$(echo "$MARKER" | jq -r '.updated_at')
+              MARKER_SEC=$(date -d "$MARKER_TIME" +%s)
+              NOW_SEC=$(date +%s)
+              DIFF=$((NOW_SEC - MARKER_SEC))
+              COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
+
+              if [ $DIFF -lt $COOLDOWN_SEC ]; then
+                REMAINING=$(((COOLDOWN_SEC - DIFF) / 60 + 1))
+                echo "❌ 쿨다운 중 - ${REMAINING}분 후 가능"
+                echo "should_skip=true" >> $GITHUB_OUTPUT
+                exit 0
+              fi
+            fi
+          done
+
+          echo "should_skip=false" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # 단위테스트 실행 (자동 또는 수동 unit-test 선택 시)
   unit-test:
     if: |
       github.event.action != 'opened' &&
       needs.check-label.outputs.should_continue == 'true' &&
+      needs.cooldown-check.outputs.should_skip != 'true' &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.run_type == 'unit-test')
-    needs: check-label
+    needs: [check-label, cooldown-check]
     runs-on: ubuntu-latest
-    outputs:
-      skipped: ${{ steps.cooldown.outputs.skipped }}
+    permissions:
+      statuses: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check cooldown
-        id: cooldown
-        if: github.event_name != 'workflow_dispatch'
-        run: |
-          # 이전 워크플로우 실행 중 unit-test가 실제로 실행된 것만 찾기
-          # (opened 이벤트는 라벨만 추가하고 테스트 안 함 → 쿨다운 계산에서 제외)
-          RUNS=$(gh run list --workflow=pr-review.yml --branch=${{ github.head_ref }} --json databaseId,createdAt --limit=10)
-
-          LAST_TEST_RUN=""
-          CURRENT_RUN_ID="${{ github.run_id }}"
-
-          for RUN_ID in $(echo "$RUNS" | jq -r '.[].databaseId'); do
-            # 현재 실행은 스킵
-            if [ "$RUN_ID" = "$CURRENT_RUN_ID" ]; then
-              continue
-            fi
-
-            # unit-test job이 실행되었는지 확인 (skipped가 아닌 경우)
-            UNIT_TEST_CONCLUSION=$(gh run view $RUN_ID --json jobs --jq '.jobs[] | select(.name == "unit-test") | .conclusion')
-
-            if [ -n "$UNIT_TEST_CONCLUSION" ] && [ "$UNIT_TEST_CONCLUSION" != "skipped" ]; then
-              LAST_TEST_RUN=$(echo "$RUNS" | jq -r --arg id "$RUN_ID" '.[] | select(.databaseId == ($id | tonumber)) | .createdAt')
-              break
-            fi
-          done
-
-          if [ -n "$LAST_TEST_RUN" ]; then
-            LAST_SEC=$(date -d "$LAST_TEST_RUN" +%s)
-            NOW_SEC=$(date +%s)
-            DIFF=$((NOW_SEC - LAST_SEC))
-            COOLDOWN_SEC=$((${{ env.COOLDOWN_MINUTES }} * 60))
-
-            if [ $DIFF -lt $COOLDOWN_SEC ]; then
-              REMAINING=$(((COOLDOWN_SEC - DIFF) / 60 + 1))
-              echo "❌ 쿨다운 중 - ${REMAINING}분 후 가능"
-
-              # PR HEAD SHA 조회 후 status 설정
-              HEAD_SHA=$(gh pr view ${{ needs.check-label.outputs.pr_number }} --json headRefOid --jq '.headRefOid')
-              gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
-                -f state=pending \
-                -f context="cooldown" \
-                -f description="Cooldown: ${REMAINING}min remaining"
-
-              echo "skipped=true" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          fi
-
-          echo "skipped=false" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Install uv
-        if: steps.cooldown.outputs.skipped != 'true'
         uses: astral-sh/setup-uv@v4
 
       - name: Run unit tests
         id: unit-test
-        if: steps.cooldown.outputs.skipped != 'true'
         run: |
           uv run pytest tests/ -v 2>&1 | tee test_output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       - name: Set unit test status
-        if: steps.cooldown.outputs.skipped != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -218,6 +220,12 @@ jobs:
           else
             STATE="failure"
             DESC="Unit test failed"
+
+            # unit-test 실패 시 merge-gate도 failure로 설정
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=failure \
+              -f context="merge-gate" \
+              -f description="Unit test failed - Approval required"
           fi
 
           gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
@@ -225,8 +233,18 @@ jobs:
             -f context="unit-test" \
             -f description="$DESC"
 
+      - name: Set cooldown marker
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          HEAD_SHA=$(gh pr view ${{ needs.check-label.outputs.pr_number }} --json headRefOid --jq '.headRefOid')
+          gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+            -f state=success \
+            -f context="cooldown-marker" \
+            -f description="Work completed at $(date -Iseconds)"
+
       - name: Comment on unit test failure
-        if: steps.cooldown.outputs.skipped != 'true' && steps.unit-test.outputs.exit_code != '0'
+        if: steps.unit-test.outputs.exit_code != '0'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -243,7 +261,6 @@ jobs:
           gh pr comment "$PR_NUMBER" --body-file comment.md
 
       - name: Collapse old unit test failure comments
-        if: steps.cooldown.outputs.skipped != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -277,43 +294,43 @@ jobs:
           done
 
       - name: Fail if unit tests failed
-        if: steps.cooldown.outputs.skipped != 'true' && steps.unit-test.outputs.exit_code != '0'
+        if: steps.unit-test.outputs.exit_code != '0'
         run: exit 1
 
-  # PR 정보 확인 및 리뷰 필요 여부 판단
-  check-conditions:
+  # AI 코드 리뷰 실행
+  ai-review:
     if: |
       always() &&
       github.event.action != 'opened' &&
       needs.check-label.outputs.should_continue == 'true' &&
+      needs.cooldown-check.outputs.should_skip != 'true' &&
       (
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'ai-review') ||
-        (github.event_name != 'workflow_dispatch' && needs.unit-test.result == 'success' && needs.unit-test.outputs.skipped != 'true')
+        (github.event_name != 'workflow_dispatch' && needs.unit-test.result == 'success')
       )
-    needs: [check-label, unit-test]
+    needs: [check-label, cooldown-check, unit-test]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+
     outputs:
-      should_run: ${{ steps.check.outputs.should_run }}
-      pr_number: ${{ steps.check.outputs.pr_number }}
+      result: ${{ steps.ai-check.outputs.result }}
+      slot: ${{ steps.check.outputs.next_slot }}
       head_sha: ${{ steps.check.outputs.head_sha }}
-      next_slot: ${{ steps.check.outputs.next_slot }}
+      pr_number: ${{ steps.check.outputs.pr_number }}
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Check if should run
+      - name: Check slot availability
         id: check
         run: |
           PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
-          EVENT="${{ github.event_name }}"
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
 
-          # PR HEAD SHA 및 브랜치명 조회
-          PR_INFO=$(gh pr view $PR_NUMBER --json headRefOid,headRefName)
-          HEAD_SHA=$(echo "$PR_INFO" | jq -r '.headRefOid')
-          HEAD_REF=$(echo "$PR_INFO" | jq -r '.headRefName')
+          # PR HEAD SHA 조회
+          HEAD_SHA=$(gh pr view $PR_NUMBER --json headRefOid --jq '.headRefOid')
           echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
-          echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
 
           # 기존 status 확인
           STATUSES=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses --jq '[.[] | select(.context | startswith("ai-review-"))]')
@@ -342,26 +359,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # AI 코드 리뷰 실행
-  ai-review:
-    needs: check-conditions
-    # always() 필요: check-conditions가 always()를 사용하므로 outputs 접근에 필요
-    if: always() && needs.check-conditions.result == 'success' && needs.check-conditions.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      statuses: write
-
-    outputs:
-      result: ${{ steps.ai-check.outputs.result }}
-      slot: ${{ needs.check-conditions.outputs.next_slot }}
-
-    steps:
       - name: Get PR diff
+        if: steps.check.outputs.should_run == 'true'
         id: diff
         run: |
-          gh pr diff ${{ needs.check-conditions.outputs.pr_number }} > diff.txt
+          gh pr diff ${{ steps.check.outputs.pr_number }} > diff.txt
           DIFF_SIZE=$(wc -c < diff.txt)
           echo "diff_size=$DIFF_SIZE" >> $GITHUB_OUTPUT
           echo "📊 Diff 크기: $DIFF_SIZE bytes"
@@ -370,15 +372,17 @@ jobs:
           GH_REPO: ${{ github.repository }}
 
       - name: Set pending status
+        if: steps.check.outputs.should_run == 'true'
         run: |
-          gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
+          gh api /repos/${{ github.repository }}/statuses/${{ steps.check.outputs.head_sha }} \
             -f state=pending \
-            -f context="ai-review-${{ needs.check-conditions.outputs.next_slot }}" \
+            -f context="ai-review-${{ steps.check.outputs.next_slot }}" \
             -f description="AI review in progress..."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run AI Review
+        if: steps.check.outputs.should_run == 'true'
         id: ai-check
         run: |
           echo "🤖 AI 코드 리뷰 실행 중..."
@@ -460,6 +464,7 @@ jobs:
           BEDROCK_API_KEY: ${{ secrets.BEDROCK_API_KEY }}
 
       - name: Set final status
+        if: steps.check.outputs.should_run == 'true'
         run: |
           if [ "${{ steps.ai-check.outputs.result }}" = "pass" ]; then
             STATE="success"
@@ -469,17 +474,28 @@ jobs:
             DESC="AI review failed"
           fi
 
-          gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
+          gh api /repos/${{ github.repository }}/statuses/${{ steps.check.outputs.head_sha }} \
             -f state="$STATE" \
-            -f context="ai-review-${{ needs.check-conditions.outputs.next_slot }}" \
+            -f context="ai-review-${{ steps.check.outputs.next_slot }}" \
             -f description="$DESC"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Collapse old review comments
+      - name: Set cooldown marker
+        if: steps.check.outputs.should_run == 'true'
         run: |
-          PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
-          HEAD_SHA="${{ needs.check-conditions.outputs.head_sha }}"
+          gh api /repos/${{ github.repository }}/statuses/${{ steps.check.outputs.head_sha }} \
+            -f state=success \
+            -f context="cooldown-marker" \
+            -f description="Work completed at $(date -Iseconds)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Collapse old review comments
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          PR_NUMBER="${{ steps.check.outputs.pr_number }}"
+          HEAD_SHA="${{ steps.check.outputs.head_sha }}"
           SHORT_SHA="${HEAD_SHA:0:7}"
 
           # 현재 커밋 SHA가 아닌 이전 리뷰 코멘트만 접기
@@ -510,8 +526,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Post PR comment
+        if: steps.check.outputs.should_run == 'true'
         run: |
-          SLOT="${{ needs.check-conditions.outputs.next_slot }}"
+          SLOT="${{ steps.check.outputs.next_slot }}"
           RESULT="${{ steps.ai-check.outputs.result }}"
           REVIEW=$(cat review.txt)
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -529,7 +546,7 @@ jobs:
             STATUS="FAIL"
           fi
 
-          HEAD_SHA="${{ needs.check-conditions.outputs.head_sha }}"
+          HEAD_SHA="${{ steps.check.outputs.head_sha }}"
           SHORT_SHA="${HEAD_SHA:0:7}"
 
           {
@@ -546,15 +563,15 @@ jobs:
             echo "</details>"
           } > comment.txt
 
-          gh pr comment ${{ needs.check-conditions.outputs.pr_number }} --body-file comment.txt
+          gh pr comment ${{ steps.check.outputs.pr_number }} --body-file comment.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
-  # 종합 판정 (merge-gate)
-  update-gate:
-    needs: [check-conditions, ai-review]
-    if: always() && needs.check-conditions.result == 'success' && needs.check-conditions.outputs.should_run == 'true'
+  # 종합 판정 (merge-gate) + Approve 확인
+  merge-gate:
+    needs: [ai-review]
+    if: always() && needs.ai-review.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       statuses: write
@@ -562,10 +579,18 @@ jobs:
 
     steps:
       - name: Calculate merge gate
+        id: gate
         run: |
-          HEAD_SHA="${{ needs.check-conditions.outputs.head_sha }}"
-          PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
+          HEAD_SHA="${{ needs.ai-review.outputs.head_sha }}"
+          PR_NUMBER="${{ needs.ai-review.outputs.pr_number }}"
           REQUIRED=${{ env.REQUIRED_COUNT }}
+
+          # HEAD_SHA가 비어있으면 (ai-review가 슬롯 부족으로 스킵된 경우) 종료
+          if [ -z "$HEAD_SHA" ]; then
+            echo "ℹ️ ai-review가 스킵됨 - merge-gate 업데이트 불필요"
+            echo "should_check_approval=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
 
           # unit-test status 확인
           UNIT_TEST_STATE=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
@@ -579,6 +604,9 @@ jobs:
               -f context="merge-gate" \
               -f description="Unit test not passed - Approval required"
             echo "❌ Unit test 미통과"
+            echo "should_check_approval=true" >> $GITHUB_OUTPUT
+            echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -601,6 +629,7 @@ jobs:
               -f context="merge-gate" \
               -f description="AI review ${TOTAL}/${REQUIRED} completed"
             echo "⏳ 추가 리뷰 필요"
+            echo "should_check_approval=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -611,6 +640,7 @@ jobs:
               -f context="merge-gate" \
               -f description="AI review in progress (${PENDING})"
             echo "⏳ 리뷰 진행 중"
+            echo "should_check_approval=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -622,6 +652,7 @@ jobs:
               -f context="merge-gate" \
               -f description="Unit test + AI review ${SUCCESS}/${REQUIRED} passed"
             echo "✅ 머지 가능"
+            echo "should_check_approval=false" >> $GITHUB_OUTPUT
           else
             # 1개라도 실패 - Approve 필요
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
@@ -629,36 +660,18 @@ jobs:
               -f context="merge-gate" \
               -f description="AI review failed (${FAILURE}) - Approval required"
             echo "❌ 사람 승인 필요"
+            echo "should_check_approval=true" >> $GITHUB_OUTPUT
+            echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Approve 시 merge-gate override
-  check-approval:
-    needs: [check-conditions, ai-review, update-gate]
-    if: always() && needs.check-conditions.result == 'success' && needs.check-conditions.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      statuses: write
-      pull-requests: read
-
-    steps:
-      - uses: actions/checkout@v4
-
       - name: Check for approvals
+        if: steps.gate.outputs.should_check_approval == 'true'
         run: |
-          HEAD_SHA="${{ needs.check-conditions.outputs.head_sha }}"
-          PR_NUMBER="${{ needs.check-conditions.outputs.pr_number }}"
-
-          # 현재 merge-gate 상태 확인
-          GATE_STATE=$(gh api /repos/${{ github.repository }}/commits/$HEAD_SHA/statuses \
-            --jq '[.[] | select(.context == "merge-gate")] | .[0].state // "pending"')
-
-          # 이미 success면 override 불필요
-          if [ "$GATE_STATE" = "success" ]; then
-            echo "ℹ️ Override 불필요 (이미 success)"
-            exit 0
-          fi
+          HEAD_SHA="${{ steps.gate.outputs.head_sha }}"
+          PR_NUMBER="${{ steps.gate.outputs.pr_number }}"
 
           # Approve 있는지 확인
           APPROVALS=$(gh pr view $PR_NUMBER --json reviews \
