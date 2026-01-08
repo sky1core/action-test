@@ -21,7 +21,7 @@ GitHub Actions로 PR에 AI 코드 검사를 자동화합니다.
 
 | 파일 | 필수 | 설명 |
 |------|------|------|
-| `ai-review.yml` | O | PR 라벨 관리, 테스트, AI 검사, 머지 판정 |
+| `pr-review.yml` | O | PR 라벨 관리, 테스트, AI 검사, 머지 판정 |
 | `approval-override.yml` | X | Approve 시 자동 override |
 
 ### 2단계: GitHub 저장소 설정
@@ -47,29 +47,23 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
 
 > 참고: `merge-gate`는 PR을 한 번 이상 만들어야 검색에 나타납니다.
 
-#### (3) 검사 횟수 설정 (선택)
+#### (3) 설정 변경 (선택)
 
-**경로**: Settings → Secrets and variables → Actions → Variables 탭 → New repository variable
+`pr-review.yml`의 `env` 섹션에서 직접 수정:
+- `REQUIRED_COUNT`: 머지에 필요한 AI 검사 횟수
+- `COOLDOWN_MINUTES`: 자동 검사 최소 간격 (분)
+- `NOT_READY_LABEL`: 리뷰 스킵용 라벨
 
-| Name | Value | 설명 |
-|------|-------|------|
-| `AI_REVIEW_REQUIRED_COUNT` | 원하는 숫자 | 머지에 필요한 AI 검사 횟수 (기본값 3) |
-| `AI_REVIEW_COOLDOWN_MINUTES` | 원하는 숫자 | 자동 검사 최소 간격 (기본값 5분) |
+### 3단계: AI API 설정
 
-### 3단계: AI 검사 로직 연결
+현재 Amazon Bedrock API를 사용합니다.
 
-`ai-review.yml` 파일에서 `Run AI Review` 단계를 찾아 실제 AI API 호출로 교체합니다.
-
-현재는 테스트용으로 joke API를 사용해 랜덤하게 pass/fail을 반환합니다.
-
-```yaml
-- name: Run AI Review
-  id: ai-check
-  run: |
-    # 여기에 실제 AI API 호출 코드 작성
-    # 결과를 RESULT 변수에 "pass" 또는 "fail"로 저장
-    echo "result=$RESULT" >> $GITHUB_OUTPUT
-```
+1. AWS에서 Bedrock 모델 접근 권한 활성화
+2. GitHub Secrets에 `BEDROCK_API_KEY` 추가
+3. `pr-review.yml`의 `AI_MODEL` 환경변수에서 모델 선택:
+   - `us.amazon.nova-micro-v1:0` (기본값, 가장 저렴)
+   - `anthropic.claude-4-sonnet-20250514-v1:0`
+   - 등
 
 ---
 
@@ -109,7 +103,7 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
 
 **CLI**:
 ```bash
-gh workflow run ai-review.yml -f pr_number=123
+gh workflow run pr-review.yml -f pr_number=123
 ```
 
 ---
@@ -142,19 +136,6 @@ PR의 Checks 탭에서 다음 status들을 볼 수 있습니다:
 - N개 슬롯이 다 차면 추가 검사 불가, 재시도는 푸시로
 - 쿨다운은 자동 실행에만 적용, 수동 실행은 무시
 - 1개라도 실패 있으면 사람 Approve 필요
-
----
-
-## 설정 커스터마이징
-
-`ai-review.yml` 상단의 `env` 섹션 또는 GitHub Variables에서 설정:
-
-```yaml
-env:
-  REQUIRED_COUNT: ${{ vars.AI_REVIEW_REQUIRED_COUNT || 3 }}      # 필요 검사 횟수
-  COOLDOWN_MINUTES: ${{ vars.AI_REVIEW_COOLDOWN_MINUTES || 5 }}  # 자동 검사 최소 간격 (분)
-  NOT_READY_LABEL: "🚧 not-ready"                                # 스킵용 라벨 이름
-```
 
 ---
 

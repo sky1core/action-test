@@ -6,7 +6,7 @@
 |------|------|
 | 커밋 | Git commit SHA. 푸시할 때마다 새로운 SHA가 생성됨 |
 | 슬롯 | AI 리뷰 결과를 저장하는 칸 (`ai-review-1`, `ai-review-2`, ...) |
-| N | 머지에 필요한 리뷰 횟수 (기본값 3, 변수로 설정 가능) |
+| N | 머지에 필요한 리뷰 횟수 (기본값 2, 변수로 설정 가능) |
 | 라벨 | `🚧 not-ready` 라벨. 리뷰 스킵용 |
 
 ---
@@ -19,14 +19,14 @@
 - `merge-gate` = pending 상태
 
 ### Q: 라벨이 있으면 어떻게 되나?
-- 모든 리뷰(테스트, AI 리뷰)가 스킵됨
+- 모든 리뷰(단위테스트, AI 리뷰)가 스킵됨
 - 푸시해도 리뷰 안 함
 
 ### Q: 라벨을 제거하면 어떻게 되나?
-- 테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
+- 단위테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
 
 ### Q: PR에 푸시하면 어떻게 되나?
-- 라벨 없으면: 테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
+- 라벨 없으면: 단위테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
 - 라벨 있으면: 아무것도 안 함
 - **중요: 푸시하면 새 커밋(SHA)이 되므로 이전 리뷰 기록은 전부 무효화됨**
 
@@ -35,16 +35,29 @@
 
 ---
 
-## 테스트
+## 단위테스트
 
-### Q: 테스트가 실패하면 AI 리뷰는 어떻게 되나?
+### Q: 단위테스트와 AI 리뷰의 관계는?
+- 별개의 작업임
+- 각각 독립적으로 수동 실행 가능
+- 자동 실행 시에만 단위테스트 → AI 리뷰 순서로 연결됨
+
+### Q: 자동 실행 시 단위테스트가 실패하면?
 - AI 리뷰 실행 안 함
-- 이유: AI 리뷰는 비용이 드는 작업. 테스트도 못 통과하는 코드에 AI 리뷰 돌릴 이유 없음.
+- 이유: AI 리뷰는 비용이 드는 작업. 단위테스트도 못 통과하는 코드에 AI 리뷰 돌릴 이유 없음.
 
-### Q: 테스트는 언제 실행되나?
-- 라벨 제거 시
-- PR에 푸시 시 (라벨 없을 때)
-- 수동 실행(workflow_dispatch) 시
+### Q: 단위테스트는 언제 실행되나?
+- 자동: 라벨 제거 시, PR에 푸시 시 (라벨 없을 때)
+- 수동: 단위테스트 워크플로우에서 PR 번호 입력
+
+### Q: AI 리뷰는 언제 실행되나?
+- 자동: 단위테스트 통과 후 1회
+- 수동: AI 리뷰 워크플로우에서 PR 번호 입력 (단위테스트 스킵)
+
+### Q: 이전 댓글은 어떻게 되나?
+- 푸시 후 새 단위테스트/AI 리뷰 실행 시, 이전 댓글은 접힘 처리됨
+- 접힌 댓글은 `<details>` 태그로 감싸져 펼쳐서 볼 수 있음
+- 이유: PR 댓글이 쌓이면 가독성이 떨어지므로
 
 ---
 
@@ -94,7 +107,11 @@
 
 ## 수동 실행 (workflow_dispatch)
 
-### Q: 수동 실행은 언제 쓰나?
+### Q: 수동 실행 가능한 워크플로우는?
+- **단위테스트**: PR 브랜치의 단위테스트만 실행
+- **AI 리뷰**: PR 브랜치의 코드 변경사항 리뷰 (단위테스트 스킵)
+
+### Q: AI 리뷰 수동 실행은 언제 쓰나?
 - 라벨 제거/푸시로 1회 자동 실행 후, 추가 리뷰가 필요할 때
 - 같은 커밋에서 N개를 채우려면 수동 실행 필요
 
@@ -111,7 +128,7 @@
 
 ### Q: 쿨다운이 뭔가?
 - 자동 실행 전 마지막 리뷰 이후 최소 대기 간격
-- 기본값 15분
+- 기본값 30분
 - 마지막 리뷰가 수동이든 자동이든 상관없이 적용됨
 
 ### Q: 쿨다운의 목적은?
@@ -178,8 +195,10 @@
 | 항목 | 값 | 설명 |
 |------|-----|------|
 | `REQUIRED_COUNT` | 2 | 머지에 필요한 AI 리뷰 횟수 |
-| `COOLDOWN_MINUTES` | 15 | 자동 리뷰 최소 간격 (분) |
+| `COOLDOWN_MINUTES` | 30 | 자동 리뷰 최소 간격 (분) |
 | `NOT_READY_LABEL` | `🚧 not-ready` | 리뷰 스킵용 라벨 |
+| `REVIEW_PREFIX` | `AI Review` | AI 리뷰 코멘트 제목 접두사 |
+| `TEST_PREFIX` | `Unit Test` | 단위테스트 코멘트 제목 접두사 |
 
 변경하려면 yml 파일을 수정하고 PR을 올려야 합니다. (리뷰 필요)
 
@@ -188,19 +207,19 @@
 ## 커스터마이징 (yml 직접 수정)
 
 ### Q: 리뷰 횟수나 쿨다운을 바꾸고 싶으면?
-- `ai-review.yml`의 `REQUIRED_COUNT`, `COOLDOWN_MINUTES` 값 수정
+- `pr-review.yml`의 `REQUIRED_COUNT`, `COOLDOWN_MINUTES` 값 수정
 - `approval-override.yml`의 `REQUIRED_COUNT`도 함께 수정
 
 ### Q: 라벨 이름을 바꾸고 싶으면?
-- `ai-review.yml`의 `NOT_READY_LABEL` 값 수정
+- `pr-review.yml`의 `NOT_READY_LABEL` 값 수정
 
-### Q: 테스트 명령어를 바꾸고 싶으면?
-- `ai-review.yml`의 `Run tests` 단계 수정
+### Q: 단위테스트 명령어를 바꾸고 싶으면?
+- `pr-review.yml`의 `Run unit tests` 단계 수정
 - 현재: `uv run pytest tests/ -v`
 - 프로젝트에 맞게 변경 필요
 
 ### Q: 대상 브랜치를 바꾸고 싶으면?
-- `ai-review.yml`의 `branches: [main, master]` 수정
+- `pr-review.yml`의 `branches: [main, master]` 수정
 - `approval-override.yml`의 job if 조건도 함께 수정 필요
 - 예: `branches: [develop]`
 
@@ -299,7 +318,7 @@ Repository → Settings → Secrets and variables → Actions → New repository
 - merge-gate 체크 없이 그냥 머지 가능
 
 ### Q: 기본 브랜치가 main/master가 아니면?
-- `ai-review.yml`의 `branches: [main, master]` 부분을 수정해야 함
+- `pr-review.yml`의 `branches: [main, master]` 부분을 수정해야 함
 - 예: `branches: [develop]` 또는 `branches: [main, master, develop]`
 - GitHub Actions의 branches 필터는 변수 사용 불가 (yml 직접 수정 필요)
 

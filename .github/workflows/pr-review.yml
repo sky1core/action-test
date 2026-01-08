@@ -1,4 +1,4 @@
-name: AI Code Review
+name: PR Review
 
 on:
   # PR 생성 시 라벨 추가, 라벨 제거/푸시 시 리뷰 실행
@@ -7,23 +7,32 @@ on:
     # ⚠️ 동기화 필요: 대상 브랜치는 approval-override.yml의 job if 조건과 함께 변경할 것.
     branches: [main, master]
 
-  # 수동 실행 (추가 리뷰용)
+  # 수동 실행
   workflow_dispatch:
     inputs:
       pr_number:
         description: 'PR 번호'
         required: true
         type: number
+      run_type:
+        description: '실행 유형'
+        required: true
+        type: choice
+        options:
+          - ai-review
+          - unit-test
 
 # 동일 PR에 대해 순차 실행 (동시 실행 방지)
 concurrency:
-  group: ai-review-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.ref }}
+  group: pr-review-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.ref }}
   cancel-in-progress: false
 
 env:
   REQUIRED_COUNT: 2
-  COOLDOWN_MINUTES: 15
+  COOLDOWN_MINUTES: 30
   NOT_READY_LABEL: "🚧 not-ready"
+  REVIEW_PREFIX: "AI Review"
+  TEST_PREFIX: "Unit Test"
   # AI 모델 선택 (Bedrock 모델 ID)
   # - us.amazon.nova-micro-v1:0 (가장 저렴, $0.035/1M)
   # - anthropic.claude-4-sonnet-20250514-v1:0 ($3/1M)
@@ -44,21 +53,21 @@ jobs:
     steps:
       - name: Create and add label
         run: |
-          gh label create "${{ env.NOT_READY_LABEL }}" --description "AI 리뷰 대기 중" --color fbca04 || true
+          gh label create "${{ env.NOT_READY_LABEL }}" --description "리뷰 준비 안됨" --color fbca04 || true
           gh pr edit ${{ github.event.pull_request.number }} --add-label "${{ env.NOT_READY_LABEL }}"
 
           gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             -f state=pending \
             -f context="merge-gate" \
-            -f description="not-ready 라벨 제거 후 리뷰 진행"
+            -f description="Remove not-ready label to start review"
 
           cat > comment.md << EOF
           ### AI 코드 리뷰
 
           리뷰 받을 준비가 되면 \`${{ env.NOT_READY_LABEL }}\` 라벨을 제거하세요.
 
-          - 라벨 제거 → 테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
-          - 추가 리뷰는 [Actions에서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)
+          - 라벨 제거 → 단위테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
+          - 추가 리뷰는 [Actions에서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/pr-review.yml)
           - 머지 조건: 리뷰 ${{ env.REQUIRED_COUNT }}개 통과 또는 Approve
           - 푸시하면 이전 기록 초기화 (다시 ${{ env.REQUIRED_COUNT }}개 통과 필요)
           - 자동 리뷰는 ${{ env.COOLDOWN_MINUTES }}분 간격 제한 (수동 실행은 제한 없음)
@@ -68,7 +77,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
-  # 라벨 체크 (테스트 전에 먼저 확인)
+  # 라벨 체크 (단위테스트 전에 먼저 확인)
   check-label:
     if: github.event.action != 'opened'
     runs-on: ubuntu-latest
@@ -119,9 +128,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 테스트 실행 (라벨 없을 때만)
-  test:
-    if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
+  # 단위테스트 실행 (자동 또는 수동 unit-test 선택 시)
+  unit-test:
+    if: |
+      github.event.action != 'opened' &&
+      needs.check-label.outputs.should_continue == 'true' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_type == 'unit-test')
     needs: check-label
     runs-on: ubuntu-latest
     steps:
@@ -130,13 +142,71 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Run tests
-        run: uv run pytest tests/ -v
+      - name: Run unit tests
+        id: unit-test
+        run: |
+          uv run pytest tests/ -v 2>&1 | tee test_output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Comment on unit test failure
+        if: steps.unit-test.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+
+          printf '## ❌ ${{ env.TEST_PREFIX }} - FAIL\n\nAI review skipped due to test failure.\n\n```\n' > comment.md
+          tail -50 test_output.txt >> comment.md
+          printf '\n```\n' >> comment.md
+
+          gh pr comment "$PR_NUMBER" --body-file comment.md
+
+      - name: Collapse old unit test failure comments
+        if: steps.unit-test.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+
+          COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | startswith("## ❌ ${{ env.TEST_PREFIX }}")) | select(.body | contains("<details>") | not) | .id] | .[]')
+
+          for COMMENT_ID in $COMMENT_IDS; do
+            BODY=$(gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" --jq '.body')
+            FIRST_LINE=$(echo "$BODY" | head -1)
+            REST=$(echo "$BODY" | tail -n +2)
+
+            printf '%s\n\n<details>\n<summary>펼쳐서 보기</summary>\n%s\n</details>' "$FIRST_LINE" "$REST" > new_body.md
+
+            gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+              -X PATCH \
+              -F body=@new_body.md
+            echo "Collapsed comment $COMMENT_ID"
+          done
+
+      - name: Comment on unit test success (manual only)
+        if: github.event.inputs.run_type == 'unit-test' && steps.unit-test.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "${{ needs.check-label.outputs.pr_number }}" --body "## ✅ ${{ env.TEST_PREFIX }} - PASS"
+
+      - name: Fail if unit tests failed
+        if: steps.unit-test.outputs.exit_code != '0'
+        run: exit 1
 
   # PR 정보 확인 및 리뷰 필요 여부 판단
   check-conditions:
-    if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
-    needs: [check-label, test]
+    if: |
+      always() &&
+      github.event.action != 'opened' &&
+      needs.check-label.outputs.should_continue == 'true' &&
+      (
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'ai-review') ||
+        (github.event_name != 'workflow_dispatch' && needs.unit-test.result == 'success')
+      )
+    needs: [check-label, unit-test]
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
@@ -184,7 +254,7 @@ jobs:
           if [ "$EVENT" != "workflow_dispatch" ]; then
             # PR 코멘트에서 마지막 AI 리뷰 시간 확인
             LAST_REVIEW=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-              --jq '[.[] | select(.body | test("^## [✅❌] AI Review")) | .created_at] | sort | last // empty')
+              --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.REVIEW_PREFIX }}")) | .created_at] | sort | last // empty')
 
             if [ -n "$LAST_REVIEW" ]; then
               LAST_SEC=$(date -d "$LAST_REVIEW" +%s)
@@ -237,7 +307,7 @@ jobs:
           gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
             -f state=pending \
             -f context="ai-review-${{ needs.check-conditions.outputs.next_slot }}" \
-            -f description="AI 리뷰 진행 중..."
+            -f description="AI review in progress..."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -257,7 +327,7 @@ jobs:
               "messages": [
                 {
                   "role": "user",
-                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 문제를 등급별로 분류하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n\n## 판정 기준\n- 🔴 Critical 있으면 → FAIL\n- 🟡 Warning 있으면 → FAIL\n- 🟢 Info만 있거나 문제 없음 → PASS\n\n## 응답 형식\n첫 줄: PASS 또는 FAIL\n둘째 줄: 빈 줄\n셋째 줄부터: 발견한 문제 (등급 이모지와 함께)\n\n```diff\n" + $diff + "\n```")}]
+                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 문제를 등급별로 분류하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n\n## 판정 기준\n- 🔴 Critical 있으면 → FAIL\n- 🟡 Warning 있으면 → FAIL\n- 🟢 Info만 있거나 문제 없음 → PASS\n\n## 응답 형식\n아래 예시처럼 정확히 응답하세요.\n\n성공 예시:\nPASS\n\n🟢 Info: 참고 사항\n1. 개선 제안 내용\n\n실패 예시:\nFAIL\n\n🟡 Warning: 수정 권장\n1. 문제 내용\n\n## 코드 변경사항\n```diff\n" + $diff + "\n```")}]
                 }
               ]
             }')")
@@ -279,10 +349,10 @@ jobs:
             FIRST_LINE=$(echo "$AI_RESPONSE" | head -1 | tr '[:lower:]' '[:upper:]')
             if echo "$FIRST_LINE" | grep -q "PASS"; then
               RESULT="pass"
-              SUMMARY="AI 리뷰 통과"
+              SUMMARY="AI review passed"
             else
               RESULT="fail"
-              SUMMARY="AI 리뷰에서 문제 발견"
+              SUMMARY="Issues found in AI review"
             fi
           fi
 
@@ -296,10 +366,10 @@ jobs:
         run: |
           if [ "${{ steps.ai-check.outputs.result }}" = "pass" ]; then
             STATE="success"
-            DESC="AI 리뷰 통과"
+            DESC="AI review passed"
           else
             STATE="failure"
-            DESC="AI 리뷰 실패"
+            DESC="AI review failed"
           fi
 
           gh api /repos/${{ github.repository }}/statuses/${{ needs.check-conditions.outputs.head_sha }} \
@@ -315,7 +385,7 @@ jobs:
 
           # 이전 AI 리뷰 코멘트 ID 목록 가져오기
           COMMENT_IDS=$(gh api "/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '[.[] | select(.body | test("^## [✅❌] AI 코드 리뷰")) | select(.body | contains("<details>") | not) | .id] | .[]')
+            --jq '[.[] | select(.body | test("^## [✅❌] ${{ env.REVIEW_PREFIX }}")) | select(.body | contains("<details open>")) | .id] | .[]')
 
           for COMMENT_ID in $COMMENT_IDS; do
             echo "접기 처리: 코멘트 $COMMENT_ID"
@@ -323,12 +393,8 @@ jobs:
             # 코멘트 본문 가져오기
             BODY=$(gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" --jq '.body')
 
-            # 첫 줄(제목)과 둘째 줄(요약) 추출
-            HEADER=$(echo "$BODY" | head -2)
-            REST=$(echo "$BODY" | tail -n +3)
-
-            # details로 감싸기
-            printf -v NEW_BODY '%s\n\n<details>\n<summary>펼쳐서 보기</summary>\n\n%s\n</details>' "$HEADER" "$REST"
+            # <details open> → <details> 로 변경 (접힌 상태로)
+            NEW_BODY=$(echo "$BODY" | sed 's/<details open>/<details>/')
 
             # 코멘트 업데이트
             gh api "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -X PATCH -f body="$NEW_BODY"
@@ -357,7 +423,7 @@ jobs:
           fi
 
           {
-            echo "## ${EMOJI} AI Review #${SLOT} - ${STATUS}"
+            echo "## ${EMOJI} ${{ env.REVIEW_PREFIX }} #${SLOT} - ${STATUS}"
             echo "🔴 ${CRITICAL} | 🟡 ${WARNING} | 🟢 ${INFO}"
             echo ""
             echo "<details open>"
@@ -408,7 +474,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=pending \
               -f context="merge-gate" \
-              -f description="AI 리뷰 ${TOTAL}/${REQUIRED} 완료"
+              -f description="AI review ${TOTAL}/${REQUIRED} completed"
             echo "⏳ 추가 리뷰 필요"
             exit 0
           fi
@@ -418,7 +484,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=pending \
               -f context="merge-gate" \
-              -f description="AI 리뷰 진행 중 (${PENDING}개)"
+              -f description="AI review in progress (${PENDING})"
             echo "⏳ 리뷰 진행 중"
             exit 0
           fi
@@ -429,14 +495,14 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
-              -f description="AI 리뷰 ${SUCCESS}/${REQUIRED} 통과"
+              -f description="AI review ${SUCCESS}/${REQUIRED} passed"
             echo "✅ 머지 가능"
           else
             # 1개라도 실패 - Approve 필요
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=failure \
               -f context="merge-gate" \
-              -f description="AI 리뷰 실패 ${FAILURE}개 - Approve 필요"
+              -f description="AI review failed (${FAILURE}) - Approval required"
             echo "❌ 사람 승인 필요"
           fi
         env:
@@ -479,7 +545,7 @@ jobs:
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
-              -f description="사람 승인으로 override"
+              -f description="Overridden by approval"
             echo "✅ Approve로 머지 가능"
           fi
         env:
