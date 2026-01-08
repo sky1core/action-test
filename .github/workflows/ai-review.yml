@@ -1,13 +1,13 @@
 name: AI Code Review
 
 on:
-  # PR 생성 시 라벨 추가, 라벨 제거/푸시 시 검사 실행
+  # PR 생성 시 라벨 추가, 라벨 제거/푸시 시 리뷰 실행
   pull_request:
     types: [opened, unlabeled, synchronize]
     # ⚠️ 동기화 필요: 대상 브랜치는 approval-override.yml의 job if 조건과 함께 변경할 것.
     branches: [main, master]
 
-  # 수동 실행 (추가 검사용)
+  # 수동 실행 (추가 리뷰용)
   workflow_dispatch:
     inputs:
       pr_number:
@@ -43,19 +43,18 @@ jobs:
           gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             -f state=pending \
             -f context="merge-gate" \
-            -f description="not-ready 라벨 제거 후 검사 진행"
+            -f description="not-ready 라벨 제거 후 리뷰 진행"
 
-          cat > comment.md << 'EOF'
-          ### AI 코드 검사 안내
+          cat > comment.md << EOF
+          ### AI 코드 리뷰
 
-          `${{ env.NOT_READY_LABEL }}` 라벨이 자동으로 추가되었습니다.
+          리뷰 받을 준비가 되면 \`${{ env.NOT_READY_LABEL }}\` 라벨을 제거하세요.
 
-          **사용 방법:**
-          1. 이 라벨이 붙어있는 동안은 검사가 실행되지 않습니다. 개발 중에는 그대로 두세요.
-          2. 검사를 받으려면 라벨을 제거하세요. 자동으로 검사가 **1회** 실행됩니다.
-          3. 이후 푸시할 때마다 검사가 **1회** 자동 실행됩니다. 단, **푸시하면 이전 통과 기록은 무효화**됩니다.
-          4. 머지하려면 **같은 커밋**에서 총 **${{ env.REQUIRED_COUNT }}개**의 검사를 통과해야 합니다. 추가 검사는 [여기서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)하세요.
-          5. 검사가 실패해도 사람이 Approve하면 머지할 수 있습니다.
+          - 라벨 제거 → 테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
+          - 추가 리뷰는 [Actions에서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/ai-review.yml)
+          - 머지 조건: 리뷰 ${{ env.REQUIRED_COUNT }}개 통과 또는 Approve
+          - 푸시하면 이전 기록 초기화 (다시 ${{ env.REQUIRED_COUNT }}개 통과 필요)
+          - 자동 리뷰는 ${{ env.COOLDOWN_MINUTES }}분 간격 제한 (수동 실행은 제한 없음)
           EOF
           gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
         env:
@@ -127,7 +126,7 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v
 
-  # PR 정보 확인 및 검사 필요 여부 판단
+  # PR 정보 확인 및 리뷰 필요 여부 판단
   check-conditions:
     if: github.event.action != 'opened' && needs.check-label.outputs.should_continue == 'true'
     needs: [check-label, test]
@@ -169,14 +168,14 @@ jobs:
 
           # 모든 슬롯 채워짐
           if [ "$NEXT_SLOT" = "0" ]; then
-            echo "❌ 이미 ${{ env.REQUIRED_COUNT }}개 검사 완료"
+            echo "❌ 이미 ${{ env.REQUIRED_COUNT }}개 리뷰 완료"
             echo "should_run=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           # 자동 실행일 때만 쿨다운 체크
           if [ "$EVENT" != "workflow_dispatch" ]; then
-            # 마지막 검사 시간 확인
+            # 마지막 리뷰 시간 확인
             LAST_CHECK=$(echo "$STATUSES" | jq -r 'sort_by(.updated_at) | last | .updated_at // empty')
 
             if [ -n "$LAST_CHECK" ]; then
@@ -194,12 +193,12 @@ jobs:
             fi
           fi
 
-          echo "✅ 검사 실행 (슬롯: ai-review-$NEXT_SLOT)"
+          echo "✅ 리뷰 실행 (슬롯: ai-review-$NEXT_SLOT)"
           echo "should_run=true" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # AI 코드 검사 실행
+  # AI 코드 리뷰 실행
   ai-review:
     needs: check-conditions
     if: needs.check-conditions.outputs.should_run == 'true'
@@ -360,7 +359,7 @@ jobs:
           FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | length')
           PENDING=$(echo "$STATUSES" | jq '[.[] | select(.state == "pending")] | length')
 
-          echo "📊 검사 현황: 총 $TOTAL / 필요 $REQUIRED (통과: $SUCCESS, 실패: $FAILURE, 진행중: $PENDING)"
+          echo "📊 리뷰 현황: 총 $TOTAL / 필요 $REQUIRED (통과: $SUCCESS, 실패: $FAILURE, 진행중: $PENDING)"
 
           # 아직 N개 안 채워짐
           if [ "$TOTAL" -lt "$REQUIRED" ]; then
@@ -368,7 +367,7 @@ jobs:
               -f state=pending \
               -f context="merge-gate" \
               -f description="AI 리뷰 ${TOTAL}/${REQUIRED} 완료"
-            echo "⏳ 추가 검사 필요"
+            echo "⏳ 추가 리뷰 필요"
             exit 0
           fi
 
@@ -378,7 +377,7 @@ jobs:
               -f state=pending \
               -f context="merge-gate" \
               -f description="AI 리뷰 진행 중 (${PENDING}개)"
-            echo "⏳ 검사 진행 중"
+            echo "⏳ 리뷰 진행 중"
             exit 0
           fi
 

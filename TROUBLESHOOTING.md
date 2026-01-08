@@ -83,16 +83,16 @@ Error: refusing to allow an OAuth App to create or update workflow without workf
 ### Status check가 보이지 않음
 - Branch protection에서 `merge-gate`를 추가했는지 확인
 
-### 검사가 스킵됨
+### 리뷰가 스킵됨
 - `🚧 not-ready` 라벨이 붙어있는지 확인
 - 쿨다운 시간 내인지 확인 (기본 15분)
-- 이미 N개 검사가 완료되었는지 확인
+- 이미 N개 리뷰가 완료되었는지 확인
 
 ### 푸시했더니 이전 통과 기록이 사라짐
-이것은 정상 동작입니다. 푸시하면 새 커밋이 되고, status check는 커밋 단위로 관리됩니다. 새 커밋에서 다시 N개의 검사를 통과해야 합니다.
+이것은 정상 동작입니다. 푸시하면 새 커밋이 되고, status check는 커밋 단위로 관리됩니다. 새 커밋에서 다시 N개의 리뷰를 통과해야 합니다.
 
 이 설계의 목적:
-- 코드가 변경되면 이전 검사 결과는 무효
+- 코드가 변경되면 이전 리뷰 결과는 무효
 - "푸시로 실패 리셋해서 재시도"를 해도 통과 기록도 같이 리셋되므로 게이밍 불가
 
 ### workflow_dispatch가 PR 브랜치의 변경을 반영 안 함
