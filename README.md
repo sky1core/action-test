@@ -23,7 +23,6 @@ GitHub Actions로 PR에 AI 코드 검사를 자동화합니다.
 |------|------|------|
 | `ai-review.yml` | O | PR 라벨 관리, 테스트, AI 검사, 머지 판정 |
 | `approval-override.yml` | X | Approve 시 자동 override |
-| `test.yml` | X | PR/push 시 테스트만 실행 (참고용) |
 
 ### 2단계: GitHub 저장소 설정
 

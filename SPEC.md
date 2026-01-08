@@ -195,6 +195,7 @@
 
 ### Q: 대상 브랜치를 바꾸고 싶으면?
 - `ai-review.yml`의 `branches: [main, master]` 수정
+- `approval-override.yml`의 job if 조건도 함께 수정 필요
 - 예: `branches: [develop]`
 
 ---
