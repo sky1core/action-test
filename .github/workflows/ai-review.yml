@@ -88,6 +88,16 @@ jobs:
             exit 0
           fi
 
+          # unlabeled 이벤트: not-ready 라벨 제거가 아니면 스킵
+          if [ "${{ github.event.action }}" = "unlabeled" ]; then
+            REMOVED_LABEL="${{ github.event.label.name }}"
+            if [ "$REMOVED_LABEL" != "${{ env.NOT_READY_LABEL }}" ]; then
+              echo "다른 라벨($REMOVED_LABEL) 제거 - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
           # 라벨 확인 (수동 실행은 라벨 무시)
           if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             HAS_LABEL=$(gh pr view $PR_NUMBER --json labels --jq '[.labels[].name] | map(select(. == "${{ env.NOT_READY_LABEL }}")) | length')
@@ -333,8 +343,9 @@ jobs:
           TOTAL=$(echo "$STATUSES" | jq 'length')
           SUCCESS=$(echo "$STATUSES" | jq '[.[] | select(.state == "success")] | length')
           FAILURE=$(echo "$STATUSES" | jq '[.[] | select(.state == "failure")] | length')
+          PENDING=$(echo "$STATUSES" | jq '[.[] | select(.state == "pending")] | length')
 
-          echo "📊 검사 현황: 총 $TOTAL / 필요 $REQUIRED (통과: $SUCCESS, 실패: $FAILURE)"
+          echo "📊 검사 현황: 총 $TOTAL / 필요 $REQUIRED (통과: $SUCCESS, 실패: $FAILURE, 진행중: $PENDING)"
 
           # 아직 N개 안 채워짐
           if [ "$TOTAL" -lt "$REQUIRED" ]; then
@@ -346,9 +357,19 @@ jobs:
             exit 0
           fi
 
+          # pending이 남아있으면 대기
+          if [ "$PENDING" -gt 0 ]; then
+            gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
+              -f state=pending \
+              -f context="merge-gate" \
+              -f description="AI 검사 진행 중 (${PENDING}개)"
+            echo "⏳ 검사 진행 중"
+            exit 0
+          fi
+
           # N개 채워짐 - 결과 판정
-          if [ "$SUCCESS" -eq "$REQUIRED" ]; then
-            # 전부 통과
+          if [ "$SUCCESS" -ge "$REQUIRED" ]; then
+            # 충분히 통과
             gh api /repos/${{ github.repository }}/statuses/$HEAD_SHA \
               -f state=success \
               -f context="merge-gate" \
