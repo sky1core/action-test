@@ -30,7 +30,7 @@ concurrency:
 env:
   REQUIRED_COUNT: 2
   COOLDOWN_MINUTES: 30
-  NOT_READY_LABEL: "🚧 not-ready"
+  NOT_READY_LABEL: "🚧 WIP"
   REVIEW_PREFIX: "AI Review"
   TEST_PREFIX: "Unit Test"
   # AI 모델 선택 (Bedrock 모델 ID)
@@ -59,7 +59,7 @@ jobs:
           gh api /repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             -f state=pending \
             -f context="PR Review Status" \
-            -f description="Remove not-ready label to start review"
+            -f description="Remove WIP label to start review"
 
           cat > comment.md << EOF
           ### AI 코드 리뷰
@@ -104,7 +104,7 @@ jobs:
             exit 0
           fi
 
-          # unlabeled 이벤트: not-ready 라벨 제거가 아니면 스킵
+          # unlabeled 이벤트: WIP 라벨 제거가 아니면 스킵
           if [ "${{ github.event.action }}" = "unlabeled" ]; then
             REMOVED_LABEL="${{ github.event.label.name }}"
             if [ "$REMOVED_LABEL" != "${{ env.NOT_READY_LABEL }}" ]; then
