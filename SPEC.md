@@ -357,3 +357,12 @@ Repository → Settings → Secrets and variables → Actions → New repository
 ### Q: 리뷰 진행 중에 PR이 닫히면?
 - 이미 실행 중인 리뷰는 계속 진행됨 (자동 중단 안 됨)
 - 드문 케이스라 별도 처리 안 함
+
+---
+
+## 기술 구현
+
+### Q: AI API 호출에 Tool Use를 쓰는 이유는?
+- AI 응답을 구조화된 형식(pass/fail + 상세 내용)으로 강제
+- 자유 형식 텍스트 파싱 불필요 → 안정적인 결과 추출
+- AI가 "pass" 또는 "fail" 외의 값을 반환할 수 없음
