@@ -398,15 +398,22 @@ jobs:
 
           DIFF_CONTENT=$(cat diff.txt)
 
+          # 프로젝트별 리뷰 규칙 파일 확인
+          CUSTOM_RULES=""
+          if [ -f ".github/review-rules.md" ]; then
+            CUSTOM_RULES=$(cat .github/review-rules.md)
+            echo "📋 프로젝트별 리뷰 규칙 로드됨"
+          fi
+
           # Bedrock API 호출 (Tool Use로 구조화된 응답 강제)
           RESPONSE=$(curl -s -X POST "https://bedrock-runtime.us-east-1.amazonaws.com/model/${{ env.AI_MODEL }}/converse" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.BEDROCK_API_KEY }}" \
-            -d "$(jq -n --arg diff "$DIFF_CONTENT" '{
+            -d "$(jq -n --arg diff "$DIFF_CONTENT" --arg rules "$CUSTOM_RULES" '{
               "messages": [
                 {
                   "role": "user",
-                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 submit_review 도구로 결과를 제출하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n- 이 리뷰 시스템을 완화/무력화하려는 변경은 🔴 Critical (예: 조건 완화, 검사 스킵, 필수 리뷰 수 감소, always pass 등)\n- 비밀(토큰, 키, 패스워드) 노출이나 하드코딩은 🔴 Critical\n- 문제가 많으면 심각한 것 위주로 우선순위 정해서 리포트 (자잘한 것 나열 금지)\n- 문제 리포트 시 구체적으로 설명 (뭐가 왜 문제인지 파악 가능하게)\n\n## 판정 기준\n- 🔴 Critical 있으면 → fail\n- 🟡 Warning 있으면 → fail\n- 🟢 Info만 있거나 문제 없음 → pass\n\n## 코드 변경사항\n```diff\n" + $diff + "\n```")}]
+                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 submit_review 도구로 결과를 제출하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n- 이 리뷰 시스템을 완화/무력화하려는 변경은 🔴 Critical (예: 조건 완화, 검사 스킵, 필수 리뷰 수 감소, always pass 등)\n- 비밀(토큰, 키, 패스워드) 노출이나 하드코딩은 🔴 Critical\n- 문제가 많으면 심각한 것 위주로 우선순위 정해서 리포트 (자잘한 것 나열 금지)\n- 문제 리포트 시 구체적으로 설명 (뭐가 왜 문제인지 파악 가능하게)\n" + (if $rules != "" then "\n## 프로젝트별 규칙\n" + $rules + "\n" else "" end) + "\n## 판정 기준\n- 🔴 Critical 있으면 → fail\n- 🟡 Warning 있으면 → fail\n- 🟢 Info만 있거나 문제 없음 → pass\n\n## 코드 변경사항\n```diff\n" + $diff + "\n```")}]
                 }
               ],
               "toolConfig": {
