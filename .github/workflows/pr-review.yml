@@ -456,10 +456,14 @@ jobs:
           TOOL_INPUT=$(echo "$RESPONSE" | jq -r '.output.message.content[0].toolUse.input // empty')
 
           if [ -z "$TOOL_INPUT" ]; then
-            echo "API 호출 실패"
+            ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .error // empty')
+            if [ -z "$ERROR_MSG" ]; then
+              ERROR_MSG="알 수 없는 오류"
+            fi
+            echo "API 호출 실패: $ERROR_MSG"
             echo "$RESPONSE" > review.txt
             RESULT="fail"
-            SUMMARY="API 호출 실패"
+            SUMMARY="API 호출 실패: $ERROR_MSG"
           else
             RESULT=$(echo "$TOOL_INPUT" | jq -r '.result')
             DETAILS=$(echo "$TOOL_INPUT" | jq -r '.details')
