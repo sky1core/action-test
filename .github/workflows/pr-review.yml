@@ -29,7 +29,7 @@ concurrency:
 
 env:
   REQUIRED_COUNT: 2
-  COOLDOWN_MINUTES: 30
+  COOLDOWN_MINUTES: 20
   NOT_READY_LABEL: "🚧 WIP"
   REVIEW_PREFIX: "AI Review"
   TEST_PREFIX: "Unit Test"
