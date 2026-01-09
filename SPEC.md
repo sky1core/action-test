@@ -228,10 +228,11 @@
 - 예: `branches: [develop]`
 
 ### Q: 프로젝트별 리뷰 규칙을 추가하고 싶으면?
-- `.github/pr-review-rules.md` 파일 생성
+- `pr-review.yml`의 `CUSTOM_REVIEW_RULES` 환경변수에 규칙 작성
 - 내용은 AI 리뷰 프롬프트에 자동 포함됨
 - 예: 성능 우선 프로젝트는 "O(n²) 이상은 Warning", 보안 프로젝트는 "외부 입력 검증 필수" 등
-- 파일이 없으면 기본 규칙만 적용
+- 비워두면 기본 규칙만 적용
+- ⚠️ 규칙 변경은 워크플로우 파일 수정이므로 AI 리뷰에서 🔴 Critical로 분류됨
 
 ---
 

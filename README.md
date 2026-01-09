@@ -56,18 +56,19 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
 
 #### (4) 프로젝트별 리뷰 규칙 (선택)
 
-`.github/pr-review-rules.md` 파일을 만들면 AI 리뷰 시 해당 내용이 프롬프트에 포함됩니다.
+`pr-review.yml`의 `CUSTOM_REVIEW_RULES` 환경변수에 프로젝트별 규칙을 추가할 수 있습니다.
 
 예시:
-```markdown
-# 이 프로젝트의 리뷰 규칙
-
-- 성능이 최우선: O(n²) 이상의 복잡도는 🟡 Warning
-- React 컴포넌트는 반드시 memo() 사용
-- console.log 남기면 🟡 Warning
+```yaml
+CUSTOM_REVIEW_RULES: |
+  - 성능이 최우선: O(n²) 이상의 복잡도는 🟡 Warning
+  - React 컴포넌트는 반드시 memo() 사용
+  - console.log 남기면 🟡 Warning
 ```
 
-파일이 없으면 기본 규칙만 적용됩니다.
+비워두면 기본 규칙만 적용됩니다.
+
+> ⚠️ 보안: 규칙 변경은 워크플로우 파일 수정이므로 AI 리뷰에서 🔴 Critical로 분류됩니다.
 
 ### 3단계: AI API 설정
 
