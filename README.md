@@ -56,7 +56,7 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
 
 #### (4) 프로젝트별 리뷰 규칙 (선택)
 
-`.github/review-rules.md` 파일을 만들면 AI 리뷰 시 해당 내용이 프롬프트에 포함됩니다.
+`.github/pr-review-rules.md` 파일을 만들면 AI 리뷰 시 해당 내용이 프롬프트에 포함됩니다.
 
 예시:
 ```markdown

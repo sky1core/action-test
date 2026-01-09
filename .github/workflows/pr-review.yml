@@ -400,8 +400,8 @@ jobs:
 
           # 프로젝트별 리뷰 규칙 파일 확인
           CUSTOM_RULES=""
-          if [ -f ".github/review-rules.md" ]; then
-            CUSTOM_RULES=$(cat .github/review-rules.md)
+          if [ -f ".github/pr-review-rules.md" ]; then
+            CUSTOM_RULES=$(cat .github/pr-review-rules.md)
             echo "📋 프로젝트별 리뷰 규칙 로드됨"
           fi
 
