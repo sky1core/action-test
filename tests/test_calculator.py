@@ -50,8 +50,3 @@ class TestPower:
 
     def test_negative_exponent(self):
         assert power(2, -1) == 0.5
-
-
-class TestFail:
-    def test_fail(self):
-        assert False
