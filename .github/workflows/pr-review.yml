@@ -396,8 +396,7 @@ jobs:
         run: |
           echo "🤖 AI 코드 리뷰 실행 중..."
 
-          # diff 내용 읽기
-          DIFF_CONTENT=$(cat diff.txt | head -c 10000)
+          DIFF_CONTENT=$(cat diff.txt)
 
           # Bedrock API 호출 (Tool Use로 구조화된 응답 강제)
           RESPONSE=$(curl -s -X POST "https://bedrock-runtime.us-east-1.amazonaws.com/model/${{ env.AI_MODEL }}/converse" \
