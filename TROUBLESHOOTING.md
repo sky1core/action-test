@@ -81,7 +81,7 @@ Error: refusing to allow an OAuth App to create or update workflow without workf
 - Workflow permissions이 "Read and write"인지 확인
 
 ### Status check가 보이지 않음
-- Branch protection에서 `merge-gate`를 추가했는지 확인
+- Branch protection에서 `PR Review Status`를 추가했는지 확인
 
 ### 리뷰가 스킵됨
 - `🚧 not-ready` 라벨이 붙어있는지 확인
@@ -111,7 +111,7 @@ AI API 호출이 실패하거나 워크플로우가 중단되면 슬롯이 pendi
 
 증상:
 - `ai-review-N`이 pending 상태로 고정
-- `merge-gate`도 pending 유지
+- `PR Review Status`도 pending 유지
 - Approve해도 override 안 됨 (failure만 override 가능)
 
 해결: 푸시해서 새 커밋으로 재시작 (이전 기록 전부 무효화)

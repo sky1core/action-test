@@ -43,9 +43,9 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
 설정 내용:
 - **Branch name pattern**: `main` (또는 본인의 기본 브랜치명)
 - **Require status checks to pass before merging** 체크
-- **Status checks that are required** 에서 `merge-gate` 검색해서 추가
+- **Status checks that are required** 에서 `PR Review Status` 검색해서 추가
 
-> 참고: `merge-gate`는 PR을 한 번 이상 만들어야 검색에 나타납니다.
+> 참고: `PR Review Status`는 PR을 한 번 이상 만들어야 검색에 나타납니다.
 
 #### (3) 설정 변경 (선택)
 
@@ -53,6 +53,21 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
 - `REQUIRED_COUNT`: 머지에 필요한 AI 검사 횟수
 - `COOLDOWN_MINUTES`: 자동 검사 최소 간격 (분)
 - `NOT_READY_LABEL`: 리뷰 스킵용 라벨
+
+#### (4) 프로젝트별 리뷰 규칙 (선택)
+
+`.github/review-rules.md` 파일을 만들면 AI 리뷰 시 해당 내용이 프롬프트에 포함됩니다.
+
+예시:
+```markdown
+# 이 프로젝트의 리뷰 규칙
+
+- 성능이 최우선: O(n²) 이상의 복잡도는 🟡 Warning
+- React 컴포넌트는 반드시 memo() 사용
+- console.log 남기면 🟡 Warning
+```
+
+파일이 없으면 기본 규칙만 적용됩니다.
 
 ### 3단계: AI API 설정
 
@@ -89,7 +104,7 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
    └─ Actions에서 수동 실행 (같은 커밋에서 N개 채우기)
 
 5. 머지
-   └─ 같은 커밋에서 N개 검사 전부 통과: merge-gate ✅
+   └─ 같은 커밋에서 N개 검사 전부 통과: PR Review Status ✅
    └─ 실패가 있으면: 사람 Approve로 override 가능
 ```
 
@@ -117,9 +132,9 @@ PR의 Checks 탭에서 다음 status들을 볼 수 있습니다:
 | `ai-review-1` | 첫 번째 AI 검사 결과 |
 | `ai-review-2` | 두 번째 AI 검사 결과 |
 | `ai-review-N` | N번째 AI 검사 결과 |
-| `merge-gate` | **종합 판정** - 이것만 통과하면 머지 가능 |
+| `PR Review Status` | **종합 판정** - 이것만 통과하면 머지 가능 |
 
-`merge-gate` 상태:
+`PR Review Status` 상태:
 - `pending`: 아직 N개 검사 미완료
 - `success`: 머지 가능
 - `failure`: AI 검사 실패 있음 - Approve 필요

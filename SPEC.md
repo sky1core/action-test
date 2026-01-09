@@ -16,7 +16,7 @@
 ### Q: PR을 생성하면 어떻게 되나?
 - `🚧 not-ready` 라벨이 자동으로 추가됨
 - 안내 코멘트가 달림
-- `merge-gate` = pending 상태
+- `PR Review Status` = pending 상태
 
 ### Q: 라벨이 있으면 어떻게 되나?
 - 모든 리뷰(단위테스트, AI 리뷰)가 스킵됨
@@ -85,25 +85,25 @@
 ## 머지 조건
 
 ### Q: 머지하려면 어떤 조건이 필요한가?
-- **방법 1**: 단위테스트 통과 + 같은 커밋에서 N개 AI 리뷰가 전부 통과 → `merge-gate` = success
-- **방법 2**: 사람이 Approve → `merge-gate` = success (override)
+- **방법 1**: 단위테스트 통과 + 같은 커밋에서 N개 AI 리뷰가 전부 통과 → `PR Review Status` = success
+- **방법 2**: 사람이 Approve → `PR Review Status` = success (override)
 
 ### Q: 단위테스트 없이 AI 리뷰만 통과하면?
-- `merge-gate` = failure
+- `PR Review Status` = failure
 - 사람 Approve 필요
 
 ### Q: N개 중 일부만 통과하면?
 - 예: 3개 중 2개 통과, 1개 실패
-- `merge-gate` = failure
+- `PR Review Status` = failure
 - 사람 Approve 필요
 
 ### Q: 실패가 하나라도 있으면 자동 머지 불가?
-- 그렇다. 1개라도 실패가 있으면 `merge-gate` = failure
+- 그렇다. 1개라도 실패가 있으면 `PR Review Status` = failure
 - 사람이 Approve해야 override됨
 
-### Q: pending 슬롯이 있으면 merge-gate는?
-- N개가 채워지기 전: `merge-gate` = pending (추가 리뷰 필요)
-- N개가 채워졌는데 pending 포함: `merge-gate` = pending (리뷰 진행 중)
+### Q: pending 슬롯이 있으면 PR Review Status는?
+- N개가 채워지기 전: `PR Review Status` = pending (추가 리뷰 필요)
+- N개가 채워졌는데 pending 포함: `PR Review Status` = pending (리뷰 진행 중)
 - N개가 채워지고 pending 없음: 전부 통과면 success, 실패 있으면 failure
 - **pending은 "아직 결과 없음"이므로 success로 판정 불가**
 
@@ -173,11 +173,11 @@
 
 ### Q: Approve의 역할은?
 - Approve = 머지 허용
-- Approve가 있으면 merge-gate가 즉시 success가 됨
+- Approve가 있으면 PR Review Status가 즉시 success가 됨
 
 ### Q: Approve하면 어떻게 되나?
-- `merge-gate`가 즉시 success로 override됨 (pending이든 failure든)
-- `merge-gate`가 이미 success면 변화 없음
+- `PR Review Status`가 즉시 success로 override됨 (pending이든 failure든)
+- `PR Review Status`가 이미 success면 변화 없음
 
 ### Q: Approve 있는 상태에서 푸시하면?
 - 새 SHA에서 리뷰가 다시 시작됨
@@ -189,7 +189,7 @@
 
 ### Q: Approve가 취소(dismiss)되면?
 - 다른 Approve가 남아있으면: 변화 없음
-- Approve가 0개가 되면: merge-gate가 다시 failure로 복원됨
+- Approve가 0개가 되면: PR Review Status가 다시 failure로 복원됨
 - 단, 리뷰 통과로 success가 된 경우는 복원 안 함 (override로 success된 경우만 복원)
 
 ---
@@ -227,12 +227,18 @@
 - `approval-override.yml`의 job if 조건도 함께 수정 필요
 - 예: `branches: [develop]`
 
+### Q: 프로젝트별 리뷰 규칙을 추가하고 싶으면?
+- `.github/review-rules.md` 파일 생성
+- 내용은 AI 리뷰 프롬프트에 자동 포함됨
+- 예: 성능 우선 프로젝트는 "O(n²) 이상은 Warning", 보안 프로젝트는 "외부 입력 검증 필수" 등
+- 파일이 없으면 기본 규칙만 적용
+
 ---
 
 ## Branch Protection 설정
 
 ### Q: Branch Protection을 설정 안 하면?
-- merge-gate 결과와 무관하게 머지 가능
+- PR Review Status 결과와 무관하게 머지 가능
 - 푸시해도 Approve가 유지됨
 - 리뷰가 의미 없어짐
 - **반드시 설정해야 함**
@@ -246,7 +252,7 @@ Settings → Branches → Add branch protection rule
    - "Dismiss stale pull request approvals when new commits are pushed" 체크
 
 3. **Require status checks to pass before merging** 체크
-   - "Status checks that are required"에서 `merge-gate` 검색해서 추가
+   - "Status checks that are required"에서 `PR Review Status` 검색해서 추가
 
 4. **Save changes** 클릭
 
@@ -299,7 +305,7 @@ Repository → Settings → Secrets and variables → Actions → New repository
 ### Q: AI API 호출이 실패하면?
 - 해당 슬롯이 pending 상태로 남음
 - pending 상태의 슬롯은 재사용 불가 (채워진 것으로 취급)
-- merge-gate는 pending 유지 (success 불가)
+- PR Review Status는 pending 유지 (success 불가)
 - Approve로 override 불가 (failure만 override 가능)
 - 재시도하려면 푸시해서 새 커밋으로
 
@@ -319,7 +325,7 @@ Repository → Settings → Secrets and variables → Actions → New repository
 ### Q: 대상이 아닌 PR은 어떻게 되나?
 - 워크플로우 자체가 트리거되지 않음
 - 라벨 추가 안 됨, 리뷰 안 됨
-- merge-gate 체크 없이 그냥 머지 가능
+- PR Review Status 체크 없이 그냥 머지 가능
 
 ### Q: 기본 브랜치가 main/master가 아니면?
 - `pr-review.yml`의 `branches: [main, master]` 부분을 수정해야 함
@@ -351,3 +357,12 @@ Repository → Settings → Secrets and variables → Actions → New repository
 ### Q: 리뷰 진행 중에 PR이 닫히면?
 - 이미 실행 중인 리뷰는 계속 진행됨 (자동 중단 안 됨)
 - 드문 케이스라 별도 처리 안 함
+
+---
+
+## 기술 구현
+
+### Q: AI API 호출에 Tool Use를 쓰는 이유는?
+- AI 응답을 구조화된 형식(pass/fail + 상세 내용)으로 강제
+- 자유 형식 텍스트 파싱 불필요 → 안정적인 결과 추출
+- AI가 "pass" 또는 "fail" 외의 값을 반환할 수 없음
