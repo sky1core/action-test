@@ -109,11 +109,16 @@
 
 ---
 
-## 수동 실행 (workflow_dispatch)
+## 수동 실행
 
-### Q: 수동 실행 가능한 워크플로우는?
-- **단위테스트**: PR 브랜치의 단위테스트만 실행
-- **AI 리뷰**: PR 브랜치의 코드 변경사항 리뷰 (단위테스트 스킵)
+### Q: 수동 실행 방법은?
+1. **PR 코멘트** (추천): `/test` 또는 `/review` 코멘트
+2. **CLI**: `gh workflow run pr-review.yml -f pr_number=123 -f run_type=ai-review`
+3. **GitHub 웹**: Actions 탭 → PR Review → Run workflow
+
+### Q: 수동 실행 가능한 유형은?
+- **단위테스트** (`/test`): PR 브랜치의 단위테스트만 실행
+- **AI 리뷰** (`/review`): PR 브랜치의 코드 변경사항 리뷰 (단위테스트 스킵)
 
 ### Q: AI 리뷰 수동 실행은 언제 쓰나?
 - 라벨 제거/푸시로 1회 자동 실행 후, 추가 리뷰가 필요할 때

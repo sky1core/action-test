@@ -111,16 +111,22 @@ CUSTOM_REVIEW_RULES: |
 
 ### 수동으로 검사 실행하기
 
-**GitHub 웹**:
-1. Actions 탭 클릭
-2. 왼쪽에서 "AI Code Review" 선택
-3. "Run workflow" 클릭
-4. PR 번호 입력 후 실행
+**PR 코멘트** (추천):
+```
+/test     # 단위테스트만 실행
+/review   # AI 리뷰만 실행
+```
 
 **CLI**:
 ```bash
-gh workflow run pr-review.yml -f pr_number=123
+gh workflow run pr-review.yml -f pr_number=123 -f run_type=ai-review
+gh workflow run pr-review.yml -f pr_number=123 -f run_type=unit-test
 ```
+
+**GitHub 웹** (Actions 탭):
+1. Actions 탭 → "PR Review" 선택
+2. "Run workflow" 클릭
+3. 브랜치, PR 번호, 실행 유형 입력 후 실행
 
 ---
 

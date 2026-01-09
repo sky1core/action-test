@@ -7,7 +7,11 @@ on:
     # ⚠️ 동기화 필요: 대상 브랜치는 approval-override.yml의 job if 조건과 함께 변경할 것.
     branches: [main, master]
 
-  # 수동 실행
+  # PR 코멘트로 수동 실행 (/test 또는 /review)
+  issue_comment:
+    types: [created]
+
+  # Actions UI에서 수동 실행
   workflow_dispatch:
     inputs:
       pr_number:
@@ -24,7 +28,7 @@ on:
 
 # 동일 PR에 대해 순차 실행 (동시 실행 방지)
 concurrency:
-  group: pr-review-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.ref }}
+  group: pr-review-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.event.issue.number || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -87,19 +91,56 @@ jobs:
     outputs:
       should_continue: ${{ steps.check.outputs.should_continue }}
       pr_number: ${{ steps.check.outputs.pr_number }}
+      run_type: ${{ steps.check.outputs.run_type }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Check label
         id: check
         run: |
+          # 이벤트별 PR 번호 및 실행 유형 결정
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PR_NUMBER="${{ github.event.inputs.pr_number }}"
+            RUN_TYPE="${{ github.event.inputs.run_type }}"
+          elif [ "${{ github.event_name }}" = "issue_comment" ]; then
+            # PR 코멘트인지 확인
+            if [ -z "${{ github.event.issue.pull_request }}" ]; then
+              echo "일반 이슈 코멘트 - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            # 권한 확인 (write 권한 필요)
+            USER="${{ github.event.comment.user.login }}"
+            PERMISSION=$(gh api /repos/${{ github.repository }}/collaborators/$USER/permission --jq '.permission' 2>/dev/null || echo "none")
+            if [[ ! "$PERMISSION" =~ ^(admin|write)$ ]]; then
+              echo "❌ 권한 없음 ($USER: $PERMISSION) - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            PR_NUMBER="${{ github.event.issue.number }}"
+            COMMENT="${{ github.event.comment.body }}"
+
+            # /test 또는 /review 코멘트 확인
+            if echo "$COMMENT" | grep -qE "^/test(\s|$)"; then
+              RUN_TYPE="unit-test"
+              echo "📝 /test 코멘트 감지 (by $USER)"
+            elif echo "$COMMENT" | grep -qE "^/review(\s|$)"; then
+              RUN_TYPE="ai-review"
+              echo "📝 /review 코멘트 감지 (by $USER)"
+            else
+              echo "트리거 코멘트 아님 - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
           else
             PR_NUMBER="${{ github.event.pull_request.number }}"
+            RUN_TYPE=""  # 자동 실행 (unit-test → ai-review 순차)
           fi
 
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "run_type=$RUN_TYPE" >> $GITHUB_OUTPUT
 
           if [ -z "$PR_NUMBER" ]; then
             echo "PR 없음 - 스킵"
@@ -118,7 +159,8 @@ jobs:
           fi
 
           # 라벨 확인 (수동 실행은 라벨 무시)
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+          IS_MANUAL="${{ github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' }}"
+          if [ "$IS_MANUAL" != "true" ]; then
             HAS_LABEL=$(gh pr view $PR_NUMBER --json labels --jq '[.labels[].name] | map(select(. == "${{ env.NOT_READY_LABEL }}")) | length')
             if [ "$HAS_LABEL" != "0" ]; then
               echo "🚧 라벨 있음 - 스킵"
@@ -142,8 +184,8 @@ jobs:
       - name: Check cooldown marker
         id: check
         run: |
-          # 수동 실행은 쿨다운 무시
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # 수동 실행은 쿨다운 무시 (workflow_dispatch, issue_comment)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "issue_comment" ]; then
             echo "should_skip=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -203,11 +245,24 @@ jobs:
       github.event.action != 'opened' &&
       needs.check-label.outputs.should_continue == 'true' &&
       needs.cooldown-check.outputs.should_skip != 'true' &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_type == 'unit-test')
+      (needs.check-label.outputs.run_type == '' || needs.check-label.outputs.run_type == 'unit-test')
     needs: [check-label, cooldown-check]
     runs-on: ubuntu-latest
     steps:
+      - name: Get PR branch
+        id: pr-branch
+        if: github.event_name != 'pull_request'
+        run: |
+          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+          BRANCH=$(gh pr view $PR_NUMBER --json headRefName --jq '.headRefName')
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr-branch.outputs.branch || github.head_ref }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -316,8 +371,8 @@ jobs:
       needs.check-label.outputs.should_continue == 'true' &&
       needs.cooldown-check.outputs.should_skip != 'true' &&
       (
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'ai-review') ||
-        (github.event_name != 'workflow_dispatch' && needs.unit-test.result == 'success')
+        needs.check-label.outputs.run_type == 'ai-review' ||
+        (needs.check-label.outputs.run_type == '' && needs.unit-test.result == 'success')
       )
     needs: [check-label, cooldown-check, unit-test]
     runs-on: ubuntu-latest
