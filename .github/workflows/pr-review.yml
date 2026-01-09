@@ -68,7 +68,7 @@ jobs:
 
           - 라벨 제거 → 단위테스트 실행 → 통과하면 AI 리뷰 1회 자동 실행
           - 추가 리뷰는 [Actions에서 수동 실행](${{ github.server_url }}/${{ github.repository }}/actions/workflows/pr-review.yml)
-          - 머지 조건: 유닛테스트 + AI 리뷰 ${{ env.REQUIRED_COUNT }}개 통과, 또는 Approve
+          - 머지 조건: 유닛테스트 + AI 리뷰 ${{ env.REQUIRED_COUNT }}개 통과, 또는 [Approve](${{ github.server_url }}/${{ github.repository }}/pull/${{ github.event.pull_request.number }}/files) (Files changed → Review changes → Approve)
           - 푸시하면 이전 기록 초기화 (다시 ${{ env.REQUIRED_COUNT }}개 통과 필요)
           - 자동 리뷰는 ${{ env.COOLDOWN_MINUTES }}분 간격 제한 (수동 실행은 제한 없음)
           EOF
