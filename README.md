@@ -4,7 +4,7 @@ GitHub Actions로 PR에 AI 코드 검사를 자동화합니다.
 
 ## 이 시스템이 하는 일
 
-1. PR 생성 시 `🚧 not-ready` 라벨을 자동 추가
+1. PR 생성 시 `🚧 WIP` 라벨을 자동 추가
 2. 라벨이 있으면 모든 검사를 스킵 (비용 절감)
 3. 라벨을 제거하면 테스트 + AI 검사 1회 자동 실행
 4. PR이 열린 상태에서 푸시하면 테스트 + AI 검사 1회 자동 실행 (라벨 없을 때만)
@@ -22,7 +22,7 @@ GitHub Actions로 PR에 AI 코드 검사를 자동화합니다.
 | 파일 | 필수 | 설명 |
 |------|------|------|
 | `pr-review.yml` | O | PR 라벨 관리, 테스트, AI 검사, 머지 판정 |
-| `approval-override.yml` | X | Approve 시 자동 override |
+| `pr-review-approval.yml` | X | Approve 시 자동 override |
 
 ### 2단계: GitHub 저장소 설정
 
@@ -88,7 +88,7 @@ GitHub 웹에서 본인 레포의 Settings로 이동합니다.
 
 ```
 1. PR 생성
-   └─ 🚧 not-ready 라벨 자동 추가됨
+   └─ 🚧 WIP 라벨 자동 추가됨
    └─ 안내 코멘트가 달림
    └─ 이 상태에서는 push해도 검사 안 함
 

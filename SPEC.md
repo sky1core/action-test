@@ -7,14 +7,14 @@
 | 커밋 | Git commit SHA. 푸시할 때마다 새로운 SHA가 생성됨 |
 | 슬롯 | AI 리뷰 결과를 저장하는 칸 (`ai-review-1`, `ai-review-2`, ...) |
 | N | 머지에 필요한 리뷰 횟수 (기본값 2, 변수로 설정 가능) |
-| 라벨 | `🚧 not-ready` 라벨. 리뷰 스킵용 |
+| 라벨 | `🚧 WIP` 라벨. 리뷰 스킵용 |
 
 ---
 
 ## 기본 흐름
 
 ### Q: PR을 생성하면 어떻게 되나?
-- `🚧 not-ready` 라벨이 자동으로 추가됨
+- `🚧 WIP` 라벨이 자동으로 추가됨
 - 안내 코멘트가 달림
 - `PR Review Status` = pending 상태
 
@@ -132,7 +132,7 @@
 
 ### Q: 쿨다운이 뭔가?
 - 자동 실행 전 마지막 워크플로우 실행 이후 최소 대기 간격
-- 기본값 30분
+- 기본값 20분
 - 워크플로우 전체에 하나의 쿨다운 적용 (단위테스트 + AI 리뷰 통합)
 
 ### Q: 쿨다운의 목적은?
@@ -199,8 +199,8 @@
 | 항목 | 값 | 설명 |
 |------|-----|------|
 | `REQUIRED_COUNT` | 2 | 머지에 필요한 AI 리뷰 횟수 |
-| `COOLDOWN_MINUTES` | 30 | 자동 리뷰 최소 간격 (분) |
-| `NOT_READY_LABEL` | `🚧 not-ready` | 리뷰 스킵용 라벨 |
+| `COOLDOWN_MINUTES` | 20 | 자동 리뷰 최소 간격 (분) |
+| `NOT_READY_LABEL` | `🚧 WIP` | 리뷰 스킵용 라벨 |
 | `REVIEW_PREFIX` | `AI Review` | AI 리뷰 코멘트 제목 접두사 |
 | `TEST_PREFIX` | `Unit Test` | 단위테스트 코멘트 제목 접두사 |
 
@@ -212,7 +212,7 @@
 
 ### Q: 리뷰 횟수나 쿨다운을 바꾸고 싶으면?
 - `pr-review.yml`의 `REQUIRED_COUNT`, `COOLDOWN_MINUTES` 값 수정
-- `approval-override.yml`의 `REQUIRED_COUNT`도 함께 수정
+- `pr-review-approval.yml`의 `REQUIRED_COUNT`도 함께 수정
 
 ### Q: 라벨 이름을 바꾸고 싶으면?
 - `pr-review.yml`의 `NOT_READY_LABEL` 값 수정
@@ -224,7 +224,7 @@
 
 ### Q: 대상 브랜치를 바꾸고 싶으면?
 - `pr-review.yml`의 `branches: [main, master]` 수정
-- `approval-override.yml`의 job if 조건도 함께 수정 필요
+- `pr-review-approval.yml`의 job if 조건도 함께 수정 필요
 - 예: `branches: [develop]`
 
 ### Q: 프로젝트별 리뷰 규칙을 추가하고 싶으면?
