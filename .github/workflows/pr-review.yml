@@ -7,7 +7,11 @@ on:
     # ⚠️ 동기화 필요: 대상 브랜치는 approval-override.yml의 job if 조건과 함께 변경할 것.
     branches: [main, master]
 
-  # 수동 실행
+  # PR 코멘트로 수동 실행 (/test 또는 /review)
+  issue_comment:
+    types: [created]
+
+  # Actions UI에서 수동 실행
   workflow_dispatch:
     inputs:
       pr_number:
@@ -24,7 +28,7 @@ on:
 
 # 동일 PR에 대해 순차 실행 (동시 실행 방지)
 concurrency:
-  group: pr-review-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.ref }}
+  group: pr-review-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.event.issue.number || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -40,6 +44,9 @@ env:
   # - deepseek.deepseek-r1-v1:0 ($1.35/1M, 추론 특화)
   # - moonshot.kimi-k2-thinking-v1:0 ($0.60/1M, 오픈 최고)
   AI_MODEL: "us.amazon.nova-micro-v1:0"
+  # 프로젝트별 리뷰 규칙 (AI 프롬프트에 포함됨, 비워두면 기본 규칙만 적용)
+  # 예: "- 성능이 최우선: O(n²) 이상의 복잡도는 🟡 Warning"
+  CUSTOM_REVIEW_RULES: ""
 
 jobs:
   # PR 생성 시 라벨 추가
@@ -84,19 +91,56 @@ jobs:
     outputs:
       should_continue: ${{ steps.check.outputs.should_continue }}
       pr_number: ${{ steps.check.outputs.pr_number }}
+      run_type: ${{ steps.check.outputs.run_type }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Check label
         id: check
         run: |
+          # 이벤트별 PR 번호 및 실행 유형 결정
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PR_NUMBER="${{ github.event.inputs.pr_number }}"
+            RUN_TYPE="${{ github.event.inputs.run_type }}"
+          elif [ "${{ github.event_name }}" = "issue_comment" ]; then
+            # PR 코멘트인지 확인
+            if [ -z "${{ github.event.issue.pull_request }}" ]; then
+              echo "일반 이슈 코멘트 - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            # 권한 확인 (write 권한 필요)
+            USER="${{ github.event.comment.user.login }}"
+            PERMISSION=$(gh api /repos/${{ github.repository }}/collaborators/$USER/permission --jq '.permission' 2>/dev/null || echo "none")
+            if [[ ! "$PERMISSION" =~ ^(admin|write)$ ]]; then
+              echo "❌ 권한 없음 ($USER: $PERMISSION) - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            PR_NUMBER="${{ github.event.issue.number }}"
+            COMMENT="${{ github.event.comment.body }}"
+
+            # /test 또는 /review 코멘트 확인
+            if echo "$COMMENT" | grep -qE "^/test(\s|$)"; then
+              RUN_TYPE="unit-test"
+              echo "📝 /test 코멘트 감지 (by $USER)"
+            elif echo "$COMMENT" | grep -qE "^/review(\s|$)"; then
+              RUN_TYPE="ai-review"
+              echo "📝 /review 코멘트 감지 (by $USER)"
+            else
+              echo "트리거 코멘트 아님 - 스킵"
+              echo "should_continue=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
           else
             PR_NUMBER="${{ github.event.pull_request.number }}"
+            RUN_TYPE=""  # 자동 실행 (unit-test → ai-review 순차)
           fi
 
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "run_type=$RUN_TYPE" >> $GITHUB_OUTPUT
 
           if [ -z "$PR_NUMBER" ]; then
             echo "PR 없음 - 스킵"
@@ -115,7 +159,8 @@ jobs:
           fi
 
           # 라벨 확인 (수동 실행은 라벨 무시)
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+          IS_MANUAL="${{ github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment' }}"
+          if [ "$IS_MANUAL" != "true" ]; then
             HAS_LABEL=$(gh pr view $PR_NUMBER --json labels --jq '[.labels[].name] | map(select(. == "${{ env.NOT_READY_LABEL }}")) | length')
             if [ "$HAS_LABEL" != "0" ]; then
               echo "🚧 라벨 있음 - 스킵"
@@ -139,8 +184,8 @@ jobs:
       - name: Check cooldown marker
         id: check
         run: |
-          # 수동 실행은 쿨다운 무시
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # 수동 실행은 쿨다운 무시 (workflow_dispatch, issue_comment)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "issue_comment" ]; then
             echo "should_skip=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -200,11 +245,24 @@ jobs:
       github.event.action != 'opened' &&
       needs.check-label.outputs.should_continue == 'true' &&
       needs.cooldown-check.outputs.should_skip != 'true' &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_type == 'unit-test')
+      (needs.check-label.outputs.run_type == '' || needs.check-label.outputs.run_type == 'unit-test')
     needs: [check-label, cooldown-check]
     runs-on: ubuntu-latest
     steps:
+      - name: Get PR branch
+        id: pr-branch
+        if: github.event_name != 'pull_request'
+        run: |
+          PR_NUMBER="${{ needs.check-label.outputs.pr_number }}"
+          BRANCH=$(gh pr view $PR_NUMBER --json headRefName --jq '.headRefName')
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr-branch.outputs.branch || github.head_ref }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -313,8 +371,8 @@ jobs:
       needs.check-label.outputs.should_continue == 'true' &&
       needs.cooldown-check.outputs.should_skip != 'true' &&
       (
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'ai-review') ||
-        (github.event_name != 'workflow_dispatch' && needs.unit-test.result == 'success')
+        needs.check-label.outputs.run_type == 'ai-review' ||
+        (needs.check-label.outputs.run_type == '' && needs.unit-test.result == 'success')
       )
     needs: [check-label, cooldown-check, unit-test]
     runs-on: ubuntu-latest
@@ -398,11 +456,10 @@ jobs:
 
           DIFF_CONTENT=$(cat diff.txt)
 
-          # 프로젝트별 리뷰 규칙 파일 확인
-          CUSTOM_RULES=""
-          if [ -f ".github/review-rules.md" ]; then
-            CUSTOM_RULES=$(cat .github/review-rules.md)
-            echo "📋 프로젝트별 리뷰 규칙 로드됨"
+          # 프로젝트별 리뷰 규칙 (환경변수에서 로드)
+          CUSTOM_RULES="${{ env.CUSTOM_REVIEW_RULES }}"
+          if [ -n "$CUSTOM_RULES" ]; then
+            echo "📋 프로젝트별 리뷰 규칙 적용됨"
           fi
 
           # Bedrock API 호출 (Tool Use로 구조화된 응답 강제)
@@ -413,7 +470,7 @@ jobs:
               "messages": [
                 {
                   "role": "user",
-                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 submit_review 도구로 결과를 제출하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n- 이 리뷰 시스템을 완화/무력화하려는 변경은 🔴 Critical (예: 조건 완화, 검사 스킵, 필수 리뷰 수 감소, always pass 등)\n- 비밀(토큰, 키, 패스워드) 노출이나 하드코딩은 🔴 Critical\n- 문제가 많으면 심각한 것 위주로 우선순위 정해서 리포트 (자잘한 것 나열 금지)\n- 문제 리포트 시 구체적으로 설명 (뭐가 왜 문제인지 파악 가능하게)\n" + (if $rules != "" then "\n## 프로젝트별 규칙\n" + $rules + "\n" else "" end) + "\n## 판정 기준\n- 🔴 Critical 있으면 → fail\n- 🟡 Warning 있으면 → fail\n- 🟢 Info만 있거나 문제 없음 → pass\n\n## 코드 변경사항\n```diff\n" + $diff + "\n```")}]
+                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 submit_review 도구로 결과를 제출하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n- 이 리뷰 시스템을 완화/무력화하려는 변경은 🔴 Critical (예: 조건 완화, 검사 스킵, 필수 리뷰 수 감소, always pass 등)\n- CUSTOM_REVIEW_RULES 환경변수 변경은 🔴 Critical (리뷰 규칙 조작 시도 가능성)\n- 비밀(토큰, 키, 패스워드) 노출이나 하드코딩은 🔴 Critical\n- 문제가 많으면 심각한 것 위주로 우선순위 정해서 리포트 (자잘한 것 나열 금지)\n- 문제 리포트 시 구체적으로 설명 (뭐가 왜 문제인지 파악 가능하게)\n" + (if $rules != "" then "\n## 프로젝트별 규칙\n" + $rules + "\n" else "" end) + "\n## 판정 기준\n- 🔴 Critical 있으면 → fail\n- 🟡 Warning 있으면 → fail\n- 🟢 Info만 있거나 문제 없음 → pass\n\n## 코드 변경사항\n```diff\n" + $diff + "\n```")}]
                 }
               ],
               "toolConfig": {

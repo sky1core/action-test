@@ -109,11 +109,16 @@
 
 ---
 
-## 수동 실행 (workflow_dispatch)
+## 수동 실행
 
-### Q: 수동 실행 가능한 워크플로우는?
-- **단위테스트**: PR 브랜치의 단위테스트만 실행
-- **AI 리뷰**: PR 브랜치의 코드 변경사항 리뷰 (단위테스트 스킵)
+### Q: 수동 실행 방법은?
+1. **PR 코멘트** (추천): `/test` 또는 `/review` 코멘트
+2. **CLI**: `gh workflow run pr-review.yml -f pr_number=123 -f run_type=ai-review`
+3. **GitHub 웹**: Actions 탭 → PR Review → Run workflow
+
+### Q: 수동 실행 가능한 유형은?
+- **단위테스트** (`/test`): PR 브랜치의 단위테스트만 실행
+- **AI 리뷰** (`/review`): PR 브랜치의 코드 변경사항 리뷰 (단위테스트 스킵)
 
 ### Q: AI 리뷰 수동 실행은 언제 쓰나?
 - 라벨 제거/푸시로 1회 자동 실행 후, 추가 리뷰가 필요할 때
@@ -228,10 +233,11 @@
 - 예: `branches: [develop]`
 
 ### Q: 프로젝트별 리뷰 규칙을 추가하고 싶으면?
-- `.github/review-rules.md` 파일 생성
+- `pr-review.yml`의 `CUSTOM_REVIEW_RULES` 환경변수에 규칙 작성
 - 내용은 AI 리뷰 프롬프트에 자동 포함됨
 - 예: 성능 우선 프로젝트는 "O(n²) 이상은 Warning", 보안 프로젝트는 "외부 입력 검증 필수" 등
-- 파일이 없으면 기본 규칙만 적용
+- 비워두면 기본 규칙만 적용
+- ⚠️ 규칙 변경은 워크플로우 파일 수정이므로 AI 리뷰에서 🔴 Critical로 분류됨
 
 ---
 
