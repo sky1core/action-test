@@ -291,6 +291,12 @@ jobs:
           # Tool Use 응답에서 결과 추출
           TOOL_INPUT=$(echo "$RESPONSE" | jq -r '.output.message.content[0].toolUse.input // empty')
 
+          # 디버그: AI 응답 출력
+          echo "=== AI Response ==="
+          echo "$RESPONSE" | jq .
+          echo "=== Tool Input ==="
+          echo "$TOOL_INPUT" | jq .
+
           if [ -z "$TOOL_INPUT" ]; then
             ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .error // empty')
             if [ -z "$ERROR_MSG" ]; then
