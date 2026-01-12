@@ -1,0 +1,21 @@
+platform: github
+checks:
+  - name: unit-test
+    trigger: /test
+    type: unit-test
+    required: true
+    mustPass: true
+    command: uv run pytest
+    framework: python
+  - name: ai-review
+    trigger: /review
+    type: ai-review
+    required: true
+    mustPass: false
+    provider: bedrock
+    model: us.amazon.nova-micro-v1:0
+    apiKeySecret: BEDROCK_API_KEY
+ciTrigger: /checks
+generateApprovalOverride: true
+branches:
+  - main

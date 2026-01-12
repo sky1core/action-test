@@ -1,0 +1,507 @@
+name: PR Checks
+
+on:
+  # PR 생성 시 가이드 코멘트
+  pull_request:
+    types: [opened]
+    branches: [main]
+
+  # PR 코멘트로 실행
+  issue_comment:
+    types: [created]
+
+# 동일 PR에 대해 순차 실행
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+jobs:
+  # PR 생성 시 가이드 코멘트
+  guide-comment:
+    if: github.event_name == 'pull_request' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      statuses: write
+    steps:
+      - name: Post guide comment
+        run: |
+          cat > comment.md << 'GUIDE_EOF'
+          ## PR Checks Guide
+
+          ### Commands
+          | Command | Description | Required |
+          |---------|-------------|----------|
+          | `/test` | unit-test | Yes (must pass) |
+          | `/review` | ai-review | Yes |
+          | `/checks` | Run all required checks | - |
+
+          ### Merge Requirements
+          All required checks must be completed, or approval is needed.
+          GUIDE_EOF
+
+          # 앞 공백 제거
+          sed -i 's/^          //' comment.md
+
+          # PR 댓글 작성
+          BODY=$(jq -Rs '.' comment.md)
+          curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -X POST "${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            -d "{\"body\": $BODY}"
+
+          # 초기 pending status 설정
+          curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -X POST "${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
+            -d '{"state":"pending","context":"PR Checks Status","description":"Waiting for checks"}'
+
+  # 트리거 체크
+  check-trigger:
+    if: github.event_name == 'issue_comment'
+    runs-on: ubuntu-latest
+    outputs:
+      should_continue: ${{ steps.check.outputs.should_continue }}
+      pr_number: ${{ steps.check.outputs.pr_number }}
+      head_sha: ${{ steps.check.outputs.head_sha }}
+      trigger: ${{ steps.check.outputs.trigger }}
+    steps:
+      - name: Check trigger
+        id: check
+        run: |
+          # PR 코멘트인지 확인
+          if [ -z "${{ github.event.issue.pull_request }}" ]; then
+            echo "should_continue=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 권한 확인 (write 이상 권한 필요)
+          USER="${{ github.event.comment.user.login }}"
+          REPO_OWNER="${{ github.repository_owner }}"
+
+          # GitHub: collaborators API로 권한 확인
+          PERMISSION=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/collaborators/$USER/permission" \
+            | jq -r '.permission' 2>/dev/null || echo "")
+
+          if [ -z "$PERMISSION" ]; then
+            echo "Failed to get permission for user $USER"
+            echo "should_continue=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [[ ! "$PERMISSION" =~ ^(owner|admin|maintain|write)$ ]]; then
+            echo "User $USER does not have write permission (got: $PERMISSION)"
+            echo "should_continue=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          PR_NUMBER="${{ github.event.issue.number }}"
+
+          # 트리거 명령어 매칭 (첫 줄 첫 단어만 사용)
+          FIRST_LINE=$(printf '%s' "${{ github.event.comment.body }}" | head -1)
+          FIRST_WORD=$(echo "$FIRST_LINE" | awk '{print $1}')
+          TRIGGER=""
+          if [[ "$FIRST_WORD" =~ ^(\/test|\/review|\/checks)$ ]]; then
+            TRIGGER="$FIRST_WORD"
+          fi
+
+          if [ -z "$TRIGGER" ]; then
+            echo "should_continue=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "should_continue=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # HEAD SHA 조회
+          HEAD_SHA=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/pulls/$PR_NUMBER" \
+            | jq -r '.head.sha')
+
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+          echo "trigger=$TRIGGER" >> $GITHUB_OUTPUT
+          echo "should_continue=true" >> $GITHUB_OUTPUT
+
+  # unit-test
+  unit-test:
+    if: |
+      needs.check-trigger.outputs.should_continue == 'true' &&
+      (needs.check-trigger.outputs.trigger == '/test' || needs.check-trigger.outputs.trigger == '/checks')
+    needs: [check-trigger]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get PR branch
+        id: pr-branch
+        run: |
+          PR_NUMBER="${{ needs.check-trigger.outputs.pr_number }}"
+          BRANCH=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/pulls/$PR_NUMBER" \
+            | jq -r '.head.ref')
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr-branch.outputs.branch }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Run unit-test
+        id: test
+        shell: bash
+        run: |
+          set +e
+          uv run pytest 2>&1 | tee test_output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          if [ "$EXIT_CODE" = "0" ]; then
+            echo "passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "passed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set status and post comment
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          bash .pr-checks/scripts/unit-test-report.sh \
+            "${{ needs.check-trigger.outputs.head_sha }}" \
+            "${{ needs.check-trigger.outputs.pr_number }}" \
+            "${{ steps.test.outputs.passed }}"
+
+      - name: Collapse old comments
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          bash .pr-checks/scripts/unit-test-collapse.sh \
+            "${{ needs.check-trigger.outputs.pr_number }}" \
+            "${{ needs.check-trigger.outputs.head_sha }}"
+
+      - name: Fail if tests failed
+        shell: bash
+        run: |
+          if [ "$(cat test_result.txt)" != "true" ]; then
+            exit 1
+          fi
+
+  # ai-review
+  ai-review:
+    if: |
+      always() &&
+      needs.check-trigger.outputs.should_continue == 'true' &&
+      (needs.check-trigger.outputs.trigger != '/checks' || (needs.unit-test.result == 'success')) &&
+      (needs.check-trigger.outputs.trigger == '/review' || needs.check-trigger.outputs.trigger == '/checks')
+    needs: [check-trigger, unit-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+
+    steps:
+      - name: Get PR diff
+        id: diff
+        run: |
+          PR_NUMBER="${{ needs.check-trigger.outputs.pr_number }}"
+          curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/pulls/$PR_NUMBER.diff" > diff.txt
+          DIFF_SIZE=$(wc -c < diff.txt)
+          echo "diff_size=$DIFF_SIZE" >> $GITHUB_OUTPUT
+
+      - name: Set pending status
+        run: |
+          HEAD_SHA="${{ needs.check-trigger.outputs.head_sha }}"
+          curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -X POST "${{ github.api_url }}/repos/${{ github.repository }}/statuses/$HEAD_SHA" \
+            -d '{"state":"pending","context":"ai-review","description":"Check in progress..."}'
+
+      - name: Run AI Review
+        id: ai-check
+        run: |
+          echo "🤖 AI 코드 리뷰 실행 중..."
+
+          DIFF_CONTENT=$(cat diff.txt)
+
+          # 프로젝트별 리뷰 규칙
+          CUSTOM_RULES=""
+
+          # Bedrock API 호출 (Tool Use로 구조화된 응답 강제)
+          RESPONSE=$(curl -s -X POST "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1:0/converse" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.BEDROCK_API_KEY }}" \
+            -d "$(jq -n --arg diff "$DIFF_CONTENT" --arg rules "$CUSTOM_RULES" '{
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [{"text": ("당신은 시니어 개발자입니다. 코드 변경사항을 리뷰하고 submit_review 도구로 결과를 제출하세요.\n\n## 위험도 등급\n- 🔴 Critical: 프로덕션 배포 불가 (보안 취약점, 심각한 버그)\n- 🟡 Warning: 수정 권장하지만 배포 가능\n- 🟢 Info: 참고 사항, 개선 제안\n\n## 특별 규칙\n- .github/workflows/ 또는 .gitea/workflows/ 파일 변경은 최소 🟡 Warning 이상으로 분류\n- 이 리뷰 시스템을 완화/무력화하려는 변경은 🔴 Critical (예: 조건 완화, 검사 스킵, 필수 리뷰 수 감소, always pass 등)\n- CUSTOM_REVIEW_RULES 환경변수 변경은 🔴 Critical (리뷰 규칙 조작 시도 가능성)\n- 비밀(토큰, 키, 패스워드) 노출이나 하드코딩은 🔴 Critical\n- 문제가 많으면 심각한 것 위주로 우선순위 정해서 리포트 (자잘한 것 나열 금지)\n- 문제 리포트 시 구체적으로 설명 (뭐가 왜 문제인지 파악 가능하게)\n" + (if $rules != "" then "\n## 프로젝트별 규칙\n" + $rules + "\n" else "" end) + "\n## 판정 기준\n- 🔴 Critical 있으면 → fail\n- 🟡 Warning 있으면 → fail\n- 🟢 Info만 있거나 문제 없음 → pass\n\n## 코드 변경사항\n```diff\n" + $diff + "\n```")}]
+                }
+              ],
+              "toolConfig": {
+                "tools": [
+                  {
+                    "toolSpec": {
+                      "name": "submit_review",
+                      "description": "코드 리뷰 결과를 제출합니다",
+                      "inputSchema": {
+                        "json": {
+                          "type": "object",
+                          "properties": {
+                            "result": {
+                              "type": "string",
+                              "enum": ["pass", "fail"],
+                              "description": "리뷰 결과 (pass 또는 fail)"
+                            },
+                            "details": {
+                              "type": "string",
+                              "description": "상세 리뷰 내용 (위험도 등급별 문제점 포함)"
+                            }
+                          },
+                          "required": ["result", "details"]
+                        }
+                      }
+                    }
+                  }
+                ],
+                "toolChoice": {
+                  "tool": {
+                    "name": "submit_review"
+                  }
+                }
+              }
+            }')")
+
+          # Tool Use 응답에서 결과 추출
+          TOOL_INPUT=$(echo "$RESPONSE" | jq -r '.output.message.content[0].toolUse.input // empty')
+
+          if [ -z "$TOOL_INPUT" ]; then
+            ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .error // empty')
+            if [ -z "$ERROR_MSG" ]; then
+              ERROR_MSG="알 수 없는 오류"
+            fi
+            echo "API 호출 실패: $ERROR_MSG"
+            echo "$RESPONSE" > review.txt
+            RESULT="fail"
+            SUMMARY="API 호출 실패: $ERROR_MSG"
+          else
+            RESULT=$(echo "$TOOL_INPUT" | jq -r '.result')
+            DETAILS=$(echo "$TOOL_INPUT" | jq -r '.details')
+            echo "$DETAILS" > review.txt
+
+            if [ "$RESULT" = "pass" ]; then
+              SUMMARY="AI review passed"
+            else
+              SUMMARY="Issues found in AI review"
+            fi
+          fi
+
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
+          echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
+        env:
+          BEDROCK_API_KEY: ${{ secrets.BEDROCK_API_KEY }}
+
+      - name: Set final status
+        run: |
+          HEAD_SHA="${{ needs.check-trigger.outputs.head_sha }}"
+
+          if [ "${{ steps.ai-check.outputs.result }}" = "pass" ]; then
+            STATE="success"
+            DESC="Check passed"
+          else
+            STATE="failure"
+            DESC="Check failed"
+          fi
+
+          curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -X POST "${{ github.api_url }}/repos/${{ github.repository }}/statuses/$HEAD_SHA" \
+            -d "{\"state\":\"$STATE\",\"context\":\"ai-review\",\"description\":\"$DESC\"}"
+
+      - name: Collapse old review comments
+        run: |
+          PR_NUMBER="${{ needs.check-trigger.outputs.pr_number }}"
+          HEAD_SHA="${{ needs.check-trigger.outputs.head_sha }}"
+          SHORT_SHA="${HEAD_SHA:0:7}"
+
+          # 현재 커밋 SHA가 아닌 이전 리뷰 코멘트만 접기
+          # (펼쳐져 있고 + 현재 SHA가 아닌 것)
+          COMMENTS=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            | jq '[.[] | select(.body | test("^## [✅❌] ai-review")) | select(.body | contains("<details open>")) | {id, body}]')
+
+          echo "$COMMENTS" | jq -c '.[]' | while read -r comment; do
+            COMMENT_ID=$(echo "$comment" | jq -r '.id')
+            BODY=$(echo "$comment" | jq -r '.body')
+
+            # 현재 커밋의 댓글이면 스킵
+            if echo "$BODY" | grep -q "📌 ${SHORT_SHA}"; then
+              echo "현재 커밋 댓글 스킵: $COMMENT_ID"
+              continue
+            fi
+
+            echo "접기 처리: 코멘트 $COMMENT_ID"
+
+            # <details open> → <details> 로 변경 (접힌 상태로)
+            NEW_BODY=$(echo "$BODY" | sed 's/<details open>/<details>/')
+
+            # 코멘트 업데이트
+            printf '%s' "$NEW_BODY" > collapse_body.md
+            PATCH_BODY=$(jq -Rs '.' collapse_body.md)
+            curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -X PATCH "${{ github.api_url }}/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+              -d "{\"body\": $PATCH_BODY}"
+          done
+
+      - name: Post PR comment
+        run: |
+          RESULT="${{ steps.ai-check.outputs.result }}"
+          REVIEW=$(cat review.txt)
+
+          # GitHub uses run_id in URL, Gitea uses run_number
+          # Note: Gitea's github.run_number incorrectly returns run_id, so we query API
+          if [[ "${{ github.server_url }}" == *"github.com"* ]]; then
+            RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            # Gitea: Query API to get correct run_number from run_id
+            ACTUAL_RUN_NUMBER=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              | jq -r '.run_number // empty' 2>/dev/null)
+            if [ -n "$ACTUAL_RUN_NUMBER" ]; then
+              RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/$ACTUAL_RUN_NUMBER"
+            else
+              RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            fi
+          fi
+
+          # 위험도별 개수 세기
+          CRITICAL=$(echo "$REVIEW" | grep -c "🔴" || true)
+          WARNING=$(echo "$REVIEW" | grep -c "🟡" || true)
+          INFO=$(echo "$REVIEW" | grep -c "🟢" || true)
+
+          if [ "$RESULT" = "pass" ]; then
+            EMOJI="✅"
+            STATUS="PASS"
+          else
+            EMOJI="❌"
+            STATUS="FAIL"
+          fi
+
+          HEAD_SHA="${{ needs.check-trigger.outputs.head_sha }}"
+          SHORT_SHA="${HEAD_SHA:0:7}"
+
+          {
+            echo "## ${EMOJI} ai-review - ${STATUS}"
+            echo "🔴 ${CRITICAL} | 🟡 ${WARNING} | 🟢 ${INFO}"
+            echo ""
+            echo "<details open>"
+            echo "<summary>상세 내용</summary>"
+            echo ""
+            echo "${REVIEW}"
+            echo ""
+            echo "---"
+            echo "🔗 [상세 로그](${RUN_URL}) | 📅 $(date '+%Y-%m-%d %H:%M:%S') | 📌 ${SHORT_SHA}"
+            echo ""
+            echo "🤖 Model: \`us.amazon.nova-micro-v1:0\` | \`/review\` 명령에 대한 응답"
+            echo "</details>"
+          } > comment.txt
+
+          BODY=$(jq -Rs '.' comment.txt)
+          curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -X POST "${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ needs.check-trigger.outputs.pr_number }}/comments" \
+            -d "{\"body\": $BODY}"
+
+  # 종합 판정 (PR Checks Status)
+  review-status:
+    needs: [check-trigger, unit-test, ai-review]
+    if: always() && needs.check-trigger.outputs.should_continue == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: read
+
+    steps:
+      - name: Calculate merge gate
+        id: gate
+        run: |
+          HEAD_SHA="${{ needs.check-trigger.outputs.head_sha }}"
+          PR_NUMBER="${{ needs.check-trigger.outputs.pr_number }}"
+          GATE_FAILED="false"
+          FAILURE_REASON=""
+
+          # unit-test: must pass
+          UNIT_TEST_STATE=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/commits/$HEAD_SHA/statuses" \
+            | jq -r '[.[] | select(.context == "unit-test")] | sort_by(.updated_at) | last | .state // "none"')
+          echo "unit-test: $UNIT_TEST_STATE"
+          if [ "$UNIT_TEST_STATE" != "success" ]; then
+            GATE_FAILED="true"
+            FAILURE_REASON="unit-test not passed"
+          fi
+
+          # ai-review: must run (any result)
+          AI_REVIEW_STATE=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/commits/$HEAD_SHA/statuses" \
+            | jq -r '[.[] | select(.context == "ai-review")] | sort_by(.updated_at) | last | .state // "none"')
+          echo "ai-review: $AI_REVIEW_STATE"
+          if [ "$AI_REVIEW_STATE" = "none" ] || [ "$AI_REVIEW_STATE" = "pending" ]; then
+            GATE_FAILED="true"
+            FAILURE_REASON="ai-review not completed"
+          fi
+
+          if [ "$GATE_FAILED" = "true" ]; then
+            curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -X POST "${{ github.api_url }}/repos/${{ github.repository }}/statuses/$HEAD_SHA" \
+              -d '{"state":"failure","context":"PR Checks Status","description":"Approval required"}'
+            echo "❌ $FAILURE_REASON"
+            echo "should_check_approval=true" >> $GITHUB_OUTPUT
+            echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          else
+            curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -X POST "${{ github.api_url }}/repos/${{ github.repository }}/statuses/$HEAD_SHA" \
+              -d '{"state":"success","context":"PR Checks Status","description":"All required checks passed"}'
+            echo "✅ 머지 가능"
+            echo "should_check_approval=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for approvals
+        if: steps.gate.outputs.should_check_approval == 'true'
+        run: |
+          HEAD_SHA="${{ steps.gate.outputs.head_sha }}"
+          PR_NUMBER="${{ steps.gate.outputs.pr_number }}"
+
+          # Approve 있는지 확인
+          APPROVALS=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
+            | jq '[.[] | select(.state == "APPROVED")] | length')
+
+          echo "👥 Approve 수: $APPROVALS"
+
+          if [ "$APPROVALS" -gt 0 ]; then
+            curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -X POST "${{ github.api_url }}/repos/${{ github.repository }}/statuses/$HEAD_SHA" \
+              -d '{"state":"success","context":"PR Checks Status","description":"Overridden by approval"}'
+            echo "✅ Approve로 머지 가능"
+          fi
