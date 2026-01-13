@@ -1,6 +1,6 @@
 #!/bin/bash
-# Unit Test Report Script
-# Usage: bash unit-test-report.sh <head_sha> <pr_number> <test_passed>
+# PR Test Report Script
+# Usage: bash pr-test-report.sh <head_sha> <pr_number> <test_passed>
 # Env: GITHUB_TOKEN, GITHUB_API_URL, GITHUB_REPOSITORY, GITHUB_SERVER_URL, GITHUB_RUN_ID, GITHUB_RUN_NUMBER
 
 set +e
