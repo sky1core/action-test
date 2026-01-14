@@ -164,3 +164,4 @@ PR의 Checks 탭에서 다음 status들을 볼 수 있습니다:
 ## 문제가 생겼을 때
 
 [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)에서 자주 발생하는 문제와 해결 방법, 워크플로우 수정 시 주의사항을 확인하세요.
+# Platform feature test - #오후
