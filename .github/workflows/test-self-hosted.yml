@@ -1,0 +1,51 @@
+name: Test Self-Hosted Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Test type'
+        required: true
+        default: 'basic'
+        type: choice
+        options:
+          - basic
+          - claude
+          - gemini
+
+jobs:
+  test-runner:
+    runs-on: [self-hosted, macOS, ARM64]
+
+    steps:
+      - name: System Info
+        run: |
+          echo "=== System Info ==="
+          uname -a
+          echo "User: $(whoami)"
+          echo "Home: $HOME"
+          echo "PWD: $(pwd)"
+
+      - name: Check PATH
+        run: |
+          echo "=== PATH ==="
+          echo $PATH | tr ':' '\n'
+
+      - name: Check CLI Tools
+        run: |
+          echo "=== CLI Tools ==="
+          which claude && claude --version || echo "claude not found"
+          which gemini && gemini --version || echo "gemini not found"
+          which codex && codex --version || echo "codex not found"
+
+      - name: Test Claude (if selected)
+        if: ${{ github.event.inputs.test_type == 'claude' }}
+        run: |
+          echo "=== Testing Claude CLI ==="
+          echo "console.log('hello')" | claude -p "이 코드가 뭔지 한 줄로 설명해"
+
+      - name: Test Gemini (if selected)
+        if: ${{ github.event.inputs.test_type == 'gemini' }}
+        run: |
+          echo "=== Testing Gemini CLI ==="
+          echo "console.log('hello')" | gemini -p "이 코드가 뭔지 한 줄로 설명해"
